@@ -81,6 +81,9 @@ journalctl --user -u usb-auth-guard -f
 sudo make uninstall
 ```
 
+After uninstall, USBGuard is reset to `allow` mode — all USB devices will work
+normally with no auth dialogs. USBGuard itself is left installed (system package).
+
 ## ⚠️ Important
 
 Do NOT manually run `apt purge usbguard usbguard-dbus` to uninstall.

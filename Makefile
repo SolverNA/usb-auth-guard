@@ -73,13 +73,16 @@ uninstall:
 	rm -f  /usr/share/polkit-1/actions/org.usbauthguard.policy
 	rm -f  /usr/lib/systemd/user/usb-auth-guard.service
 	systemctl daemon-reload
-	# Возвращаем USBGuard к безопасным дефолтам
-	sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=apply-policy/' \
+	# Возвращаем USBGuard в разрешительный режим — без нашего демона
+	# новые устройства некому авторизовать, поэтому блокировка снимается
+	sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' \
 	    /etc/usbguard/usbguard-daemon.conf 2>/dev/null || true
-	sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' \
+	sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=allow/' \
 	    /etc/usbguard/usbguard-daemon.conf 2>/dev/null || true
+	systemctl reload-or-restart usbguard 2>/dev/null || true
 	# НЕ делаем purge usbguard — это системный пакет
-	@echo "==> Uninstalled. USBGuard left intact with safe defaults."
+	@echo "==> Uninstalled. USBGuard left intact; policies reset to 'allow' so all USB devices work."
+	@echo "    Re-run 'sudo make setup-usbguard' if you reinstall usb-auth-guard later."
 
 # Собрать .deb пакет
 deb:
