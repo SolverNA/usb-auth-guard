@@ -81,8 +81,11 @@ journalctl --user -u usb-auth-guard -f
 sudo make uninstall
 ```
 
-`make uninstall` now also restores USBGuard config and disables `usbguard` / `usbguard-dbus`
-to prevent USB devices from being left blocked after removal.
+## ⚠️ Important
+
+Do NOT manually run `apt purge usbguard usbguard-dbus` to uninstall.
+Use `sudo make uninstall` only — it safely removes usb-auth-guard
+without touching system packages that SDDM and polkit depend on.
 
 ## License
 
