@@ -49,6 +49,7 @@ systemctl --user enable --now usb-auth-guard
 - `usbguard` + `usbguard-dbus`
 - `python3-dbus`, `python3-gi`
 - `policykit-1` (polkit)
+- `curl` (for installer script)
 - systemd + KDE Plasma or GNOME (any polkit agent)
 
 ## How it works

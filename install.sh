@@ -23,7 +23,7 @@ command -v systemctl > /dev/null || error "systemd not found"
 
 info "Installing dependencies..."
 apt-get update -qq
-apt-get install -y usbguard python3-dbus python3-gi policykit-1 2>/dev/null || \
+apt-get install -y usbguard python3-dbus python3-gi policykit-1 curl 2>/dev/null || \
     error "apt-get failed. Check your internet connection."
 
 # kdialog (KDE) или zenity (GNOME) — для fallback уведомлений
@@ -88,7 +88,6 @@ systemctl enable --now usbguard-dbus 2>/dev/null || warn "Could not enable usbgu
 
 # User service — для текущего залогиненного пользователя
 REAL_USER="${SUDO_USER:-$USER}"
-REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 
 su -l "$REAL_USER" -s /bin/bash -c \
     "systemctl --user daemon-reload && systemctl --user enable --now usb-auth-guard" || \

@@ -3,7 +3,7 @@ Version: 1.0.0
 Section: admin
 Priority: optional
 Architecture: all
-Depends: usbguard, python3, python3-dbus, python3-gi
+Depends: usbguard, usbguard-dbus | usbguard, python3, python3-dbus, python3-gi
 Recommends: polkitd | policykit-1, kde-cli-tools | zenity
 Maintainer: SolVerNA <gizartv@gmail.com>
 Homepage: https://github.com/SolVerNA/usb-auth-guard
