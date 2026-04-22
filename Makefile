@@ -73,7 +73,18 @@ uninstall:
 	rm -f  /usr/share/polkit-1/actions/org.usbauthguard.policy
 	rm -f  /usr/lib/systemd/user/usb-auth-guard.service
 	systemctl daemon-reload
-	@echo "==> Uninstalled."
+	@echo ""
+	@echo "==> Restoring USBGuard to default policy (apply-policy)..."
+	@if [ -f /etc/usbguard/usbguard-daemon.conf ]; then \
+	    sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=apply-policy/' \
+	        /etc/usbguard/usbguard-daemon.conf 2>/dev/null || true; \
+	    sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' \
+	        /etc/usbguard/usbguard-daemon.conf 2>/dev/null || true; \
+	fi
+	systemctl restart usbguard 2>/dev/null || true
+	@echo "==> Uninstalled. USBGuard is still active but uses default (apply-policy)."
+	@echo "    Devices in /etc/usbguard/rules.conf remain allowed."
+	@echo "    To fully disable USB blocking: sudo systemctl disable --now usbguard"
 
 # Собрать .deb пакет
 deb:

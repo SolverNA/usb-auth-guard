@@ -4,7 +4,7 @@ Section: admin
 Priority: optional
 Architecture: all
 Depends: usbguard, python3, python3-dbus, python3-gi
-Recommends: polkitd | policykit-1, kde-cli-tools | zenity
+Recommends: usbguard-dbus, polkitd | policykit-1, kde-cli-tools | zenity
 Maintainer: SolVerNA <SolVerNA@users.noreply.github.com>
 Homepage: https://github.com/SolVerNA/usb-auth-guard
 Description: USB device authorization daemon with polkit password prompt
