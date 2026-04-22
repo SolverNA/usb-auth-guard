@@ -21,8 +21,6 @@ case "$1" in
     if [ ! -s /etc/usbguard/rules.conf ]; then
         echo "Generating USBGuard rules for currently connected devices..."
         usbguard generate-policy > /etc/usbguard/rules.conf 2>/dev/null || true
-        # Убираем hotplug устройства из постоянных правил
-        sed -i '/with-connect-type "hotplug"/d' /etc/usbguard/rules.conf
     fi
 
     # Сообщение пользователю
