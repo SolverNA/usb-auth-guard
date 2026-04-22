@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+  remove|purge)
+    # Останавливаем user сервис у всех пользователей
+    for uid in $(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $3}'); do
+        systemctl --machine="$(id -un $uid)@.host" --user stop usb-auth-guard 2>/dev/null || true
+        systemctl --machine="$(id -un $uid)@.host" --user disable usb-auth-guard 2>/dev/null || true
+    done
+    ;;
+esac
+
+exit 0

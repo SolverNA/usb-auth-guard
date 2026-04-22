@@ -1,0 +1,42 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+  configure)
+    # Создаём группу usbguard если не существует
+    if ! getent group usbguard > /dev/null 2>&1; then
+        groupadd --system usbguard
+    fi
+
+    # Права на helper (должен быть root:root 755 для pkexec)
+    chown root:root /usr/local/lib/usb-auth-guard/helper
+    chmod 755 /usr/local/lib/usb-auth-guard/helper
+
+    # Включаем системные сервисы
+    systemctl daemon-reload
+    systemctl enable usbguard usbguard-dbus 2>/dev/null || true
+    systemctl start usbguard usbguard-dbus 2>/dev/null || true
+
+    # Генерируем правила для текущих устройств если rules.conf пустой
+    if [ ! -s /etc/usbguard/rules.conf ]; then
+        echo "Generating USBGuard rules for currently connected devices..."
+        usbguard generate-policy > /etc/usbguard/rules.conf 2>/dev/null || true
+        # Убираем hotplug устройства из постоянных правил
+        sed -i '/with-connect-type "hotplug"/d' /etc/usbguard/rules.conf
+    fi
+
+    # Сообщение пользователю
+    echo ""
+    echo "usb-auth-guard installed successfully!"
+    echo ""
+    echo "Enable for your user:"
+    echo "  systemctl --user enable --now usb-auth-guard"
+    echo ""
+    echo "If usbguard blocked your current devices, run:"
+    echo "  sudo usbguard generate-policy | sudo tee /etc/usbguard/rules.conf"
+    echo "  sudo systemctl restart usbguard"
+    echo ""
+    ;;
+esac
+
+exit 0

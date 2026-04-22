@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""
+usb-auth-guard — USB device authorization daemon for KDE/Linux
+Uses polkit (pkexec) for native KDE password dialog.
+
+https://github.com/SolVerNA/usb-auth-guard
+License: MIT
+"""
+
+import dbus
+import dbus.mainloop.glib
+from gi.repository import GLib
+import subprocess
+import os
+import sys
+import logging
+import re
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[usb-auth-guard] %(levelname)s %(message)s'
+)
+log = logging.getLogger(__name__)
+
+CURRENT_USER = os.environ.get('USER') or os.environ.get('LOGNAME', 'root')
+
+
+def get_env():
+    env = os.environ.copy()
+    for var in ('DISPLAY', 'XAUTHORITY', 'DBUS_SESSION_BUS_ADDRESS',
+                'XDG_RUNTIME_DIR', 'KDE_FULL_SESSION'):
+        val = os.environ.get(var)
+        if val:
+            env[var] = val
+    return env
+
+
+def allow_device_via_polkit(device_id: int, device_name: str) -> bool:
+    try:
+        result = subprocess.run(
+            [
+                'pkexec',
+                '--disable-internal-agent',
+                '/usr/local/lib/usb-auth-guard/helper',
+                str(device_id)
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=get_env()
+        )
+        if result.returncode == 0:
+            log.info('Device %d "%s" allowed via polkit', device_id, device_name)
+            return True
+        else:
+            log.info('Device %d denied or cancelled (pkexec exit=%d)',
+                     device_id, result.returncode)
+            return False
+    except subprocess.TimeoutExpired:
+        log.warning('Polkit dialog timed out for device %d', device_id)
+        return False
+    except Exception as e:
+        log.error('pkexec error: %s', e)
+        return False
+
+
+def parse_device_name(device_rule: str) -> str:
+    m = re.search(r'name\s+"([^"]+)"', str(device_rule))
+    if m and m.group(1).strip():
+        return m.group(1)
+    m = re.search(r'\bid\s+([0-9a-fA-F]{4}:[0-9a-fA-F]{4})\b', str(device_rule))
+    if m:
+        return f'USB Device {m.group(1)}'
+    return 'Unknown USB Device'
+
+
+def on_device_presence_changed(device_id, event_type, target, device_rule, *args):
+    INSERT = 1
+    BLOCK  = 1
+
+    if int(event_type) != INSERT:
+        return
+    if int(target) != BLOCK:
+        return
+
+    device_name = parse_device_name(device_rule)
+    log.info('New blocked device: id=%d name="%s"', int(device_id), device_name)
+    allow_device_via_polkit(int(device_id), device_name)
+
+
+def main():
+    log.info('Starting usb-auth-guard (polkit mode) for user %s', CURRENT_USER)
+
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+
+    try:
+        bus = dbus.SystemBus()
+        proxy = bus.get_object('org.usbguard1', '/org/usbguard1/Devices')
+        iface = dbus.Interface(proxy, dbus_interface='org.usbguard.Devices1')
+        iface.connect_to_signal('DevicePresenceChanged', on_device_presence_changed)
+        log.info('Listening for USBGuard events...')
+    except dbus.DBusException as e:
+        log.error('Cannot connect to USBGuard D-Bus: %s', e)
+        log.error('Run: sudo systemctl start usbguard-dbus')
+        sys.exit(1)
+
+    loop = GLib.MainLoop()
+    try:
+        loop.run()
+    except KeyboardInterrupt:
+        log.info('Stopped.')
+
+
+if __name__ == '__main__':
+    main()

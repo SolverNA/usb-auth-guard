@@ -1,0 +1,19 @@
+[Unit]
+Description=USB Auth Guard — polkit password prompt for USB devices
+Documentation=https://github.com/SolVerNA/usb-auth-guard
+After=graphical-session.target dbus.service
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/usb-auth-guard
+Restart=on-failure
+RestartSec=3
+
+PassEnvironment=DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR KDE_FULL_SESSION
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
