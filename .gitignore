@@ -1,0 +1,4 @@
+*.deb
+usb-auth-guard_*/
+__pycache__/
+*.pyc

@@ -1,0 +1,20 @@
+#!/bin/bash
+# usb-auth-guard-helper
+# Runs as root via pkexec — calls usbguard allow-device
+# NO -p flag: authorization is per-session only (not persisted)
+
+set -euo pipefail
+
+DEVICE_ID="${1:-}"
+
+if [[ -z "$DEVICE_ID" ]]; then
+    echo "Usage: usb-auth-guard-helper <device_id>" >&2
+    exit 1
+fi
+
+if ! [[ "$DEVICE_ID" =~ ^[0-9]+$ ]]; then
+    echo "Error: device_id must be a number" >&2
+    exit 1
+fi
+
+exec usbguard allow-device "$DEVICE_ID"
