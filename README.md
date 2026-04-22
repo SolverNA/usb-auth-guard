@@ -26,6 +26,9 @@ Insert USB → USBGuard blocks at kernel level
 curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/master/install.sh | sudo bash
 ```
 
+> **After the script finishes:** log out and log back into your desktop session, **or** open a terminal and run `systemctl --user start usb-auth-guard`.
+> The service needs to start inside your graphical session so that the polkit dialog can appear on screen.
+
 ### .deb package (build from source)
 
 ```bash
