@@ -29,10 +29,12 @@ curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/master/inst
 ### .deb package (build from source)
 
 ```bash
+# if needed:
+# sudo apt-get install -y make dpkg-dev
 git clone https://github.com/SolVerNA/usb-auth-guard
 cd usb-auth-guard
 make deb
-sudo dpkg -i usb-auth-guard_1.0.0.deb
+sudo dpkg -i ./usb-auth-guard_1.0.0.deb
 systemctl --user enable --now usb-auth-guard
 ```
 
@@ -50,7 +52,7 @@ systemctl --user enable --now usb-auth-guard
 
 - `usbguard` + `usbguard-dbus`
 - `python3-dbus`, `python3-gi`
-- `policykit-1` (polkit)
+- `policykit-1` **or** `polkitd` + `pkexec`
 - `curl` (for installer script)
 - systemd + KDE Plasma or GNOME (any polkit agent)
 
@@ -75,10 +77,12 @@ journalctl --user -u usb-auth-guard -f
 ## Uninstall
 
 ```bash
-git clone https://github.com/SolVerNA/usb-auth-guard
-cd usb-auth-guard
+# from repo directory:
 sudo make uninstall
 ```
+
+`make uninstall` now also restores USBGuard config and disables `usbguard` / `usbguard-dbus`
+to prevent USB devices from being left blocked after removal.
 
 ## License
 
