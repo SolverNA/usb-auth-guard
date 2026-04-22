@@ -26,6 +26,9 @@ Insert USB → USBGuard blocks at kernel level
 curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/master/install.sh | sudo bash
 ```
 
+> **After the script finishes:** log out and log back into your desktop session, **or** open a terminal and run `systemctl --user start usb-auth-guard`.
+> The service needs to start inside your graphical session so that the polkit dialog can appear on screen.
+
 ### .deb package (build from source)
 
 ```bash
@@ -81,8 +84,14 @@ journalctl --user -u usb-auth-guard -f
 sudo make uninstall
 ```
 
-`make uninstall` now also restores USBGuard config and disables `usbguard` / `usbguard-dbus`
-to prevent USB devices from being left blocked after removal.
+After uninstall, USBGuard is reset to `allow` mode — all USB devices will work
+normally with no auth dialogs. USBGuard itself is left installed (system package).
+
+## ⚠️ Important
+
+Do NOT manually run `apt purge usbguard usbguard-dbus` to uninstall.
+Use `sudo make uninstall` only — it safely removes usb-auth-guard
+without touching system packages that SDDM and polkit depend on.
 
 ## License
 

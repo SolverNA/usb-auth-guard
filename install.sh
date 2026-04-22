@@ -93,12 +93,18 @@ systemctl daemon-reload
 systemctl enable --now usbguard     2>/dev/null || warn "Could not enable usbguard"
 systemctl enable --now usbguard-dbus 2>/dev/null || warn "Could not enable usbguard-dbus"
 
-# User service — для текущего залогиненного пользователя
+# User service — только enable, НЕ --now
+# Если запустить через su -l здесь, сервис стартует без DISPLAY/XAUTHORITY/DBUS_SESSION_BUS_ADDRESS
+# и pkexec не сможет отобразить диалог. Сервис должен стартовать в живой графической сессии.
 REAL_USER="${SUDO_USER:-$USER}"
+REAL_UID=$(id -u "$REAL_USER")
 
-su -l "$REAL_USER" -s /bin/bash -c \
-    "systemctl --user daemon-reload && systemctl --user enable --now usb-auth-guard" || \
-    warn "Could not enable user service — run manually: systemctl --user enable --now usb-auth-guard"
+# Reload и enable (без --now) — сервис автоматически поднимется при следующем логине
+sudo -u "$REAL_USER" XDG_RUNTIME_DIR=/run/user/$REAL_UID \
+    systemctl --user daemon-reload 2>/dev/null || true
+sudo -u "$REAL_USER" XDG_RUNTIME_DIR=/run/user/$REAL_UID \
+    systemctl --user enable usb-auth-guard 2>/dev/null || \
+    warn "Could not enable user service — run manually: systemctl --user enable usb-auth-guard"
 
 # ── Готово ────────────────────────────────────────────────────────────────────
 
@@ -109,8 +115,15 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║  usb-auth-guard installed successfully!          ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "  Insert any USB device to test — a password dialog will appear."
+echo -e "${YELLOW}  ⚠  Action required:${NC}"
+echo "  The user service must start inside your graphical (desktop) session."
+echo "  Choose one of:"
+echo ""
+echo "    a) Log out and log back in  ← recommended, service starts automatically"
+echo ""
+echo "    b) Or, right now in your desktop terminal:"
+echo "         systemctl --user start usb-auth-guard"
 echo ""
 echo "  Check logs:    journalctl --user -u usb-auth-guard -f"
-echo "  Uninstall:     sudo make uninstall  (or see README)"
+echo "  Uninstall:     curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/master/uninstall.sh | sudo bash"
 echo ""
