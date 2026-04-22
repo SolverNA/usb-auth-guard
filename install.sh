@@ -23,8 +23,15 @@ command -v systemctl > /dev/null || error "systemd not found"
 
 info "Installing dependencies..."
 apt-get update -qq 2>/dev/null || warn "apt-get update had errors (continuing anyway)"
-apt-get install -y usbguard python3-dbus python3-gi policykit-1 curl 2>/dev/null || \
+apt-get install -y usbguard python3-dbus python3-gi curl 2>/dev/null || \
     error "apt-get failed. Check your internet connection."
+
+# policykit package name differs across distros (e.g. Kali uses polkitd/pkexec)
+apt-get install -y policykit-1 2>/dev/null || \
+apt-get install -y polkitd pkexec 2>/dev/null || \
+apt-get install -y pkexec 2>/dev/null || \
+    error "Could not install polkit (policykit-1/polkitd/pkexec)."
+command -v pkexec >/dev/null || error "pkexec is required but was not found."
 
 # kdialog (KDE) или zenity (GNOME) — для fallback уведомлений
 apt-get install -y kde-cli-tools 2>/dev/null || \

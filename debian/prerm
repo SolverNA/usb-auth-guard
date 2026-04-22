@@ -9,14 +9,13 @@ case "$1" in
         systemctl --machine="$(id -un "$uid")@.host" --user disable usb-auth-guard 2>/dev/null || true
     done
 
-    # Восстанавливаем политики USBGuard в дефолт (apply-policy),
-    # чтобы уже подключённые устройства (мышь, клава) не блокировались
+    # Restore safe policies to avoid lockout
     CONF=/etc/usbguard/usbguard-daemon.conf
     if [ -f "$CONF" ]; then
-        sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=apply-policy/' "$CONF" || true
+        sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' "$CONF" || true
         sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' "$CONF" || true
     fi
-    systemctl restart usbguard 2>/dev/null || true
+    systemctl disable --now usbguard usbguard-dbus 2>/dev/null || true
     ;;
 esac
 
