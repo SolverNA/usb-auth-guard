@@ -5,9 +5,18 @@ case "$1" in
   remove|purge)
     # Останавливаем user сервис у всех пользователей
     for uid in $(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $3}'); do
-        systemctl --machine="$(id -un $uid)@.host" --user stop usb-auth-guard 2>/dev/null || true
-        systemctl --machine="$(id -un $uid)@.host" --user disable usb-auth-guard 2>/dev/null || true
+        systemctl --machine="$(id -un "$uid")@.host" --user stop usb-auth-guard 2>/dev/null || true
+        systemctl --machine="$(id -un "$uid")@.host" --user disable usb-auth-guard 2>/dev/null || true
     done
+
+    # Восстанавливаем политики USBGuard в дефолт (apply-policy),
+    # чтобы уже подключённые устройства (мышь, клава) не блокировались
+    CONF=/etc/usbguard/usbguard-daemon.conf
+    if [ -f "$CONF" ]; then
+        sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=apply-policy/' "$CONF" || true
+        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' "$CONF" || true
+    fi
+    systemctl restart usbguard 2>/dev/null || true
     ;;
 esac
 
