@@ -23,13 +23,15 @@ Insert USB → USBGuard blocks at kernel level
 ### One-liner (Debian / Kali / Ubuntu)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/master/install.sh | sudo bash
 ```
 
-### .deb package
+### .deb package (build from source)
 
 ```bash
-wget https://github.com/SolVerNA/usb-auth-guard/releases/latest/download/usb-auth-guard_1.0.0.deb
+git clone https://github.com/SolVerNA/usb-auth-guard
+cd usb-auth-guard
+make deb
 sudo dpkg -i usb-auth-guard_1.0.0.deb
 systemctl --user enable --now usb-auth-guard
 ```
