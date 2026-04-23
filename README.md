@@ -33,11 +33,12 @@ curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/master/inst
 
 ```bash
 # if needed:
-# sudo apt-get install -y make dpkg-dev
+# sudo apt-get install -y git make dpkg-dev
 git clone https://github.com/SolVerNA/usb-auth-guard
 cd usb-auth-guard
 make deb
-sudo dpkg -i ./usb-auth-guard_1.0.0.deb
+sudo apt install -y ./usb-auth-guard_1.0.0.deb   # installs usbguard and all other dependencies automatically
+sudo make setup-usbguard                           # trust currently connected devices, put USBGuard into block mode
 systemctl --user enable --now usb-auth-guard
 ```
 
