@@ -14,17 +14,13 @@ warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[x]${NC} $*"; exit 1; }
 
 TTY_FD=""
-if exec {TTY_FD}</dev/tty 2>/dev/null; then
-    :
-else
-    TTY_FD=""
-fi
+exec {TTY_FD}</dev/tty 2>/dev/null || TTY_FD=""
 
 ask_yes_no() {
     local prompt="$1"
     local yn=""
 
-    if [[ -n "$TTY_FD" ]]; then
+    if [[ -n "$TTY_FD" && "$TTY_FD" =~ ^[0-9]+$ ]]; then
         read -r -p "$prompt" yn <&$TTY_FD || true
     else
         warn "No interactive TTY detected — defaulting to No"
@@ -108,7 +104,7 @@ fi
 
 systemctl daemon-reload
 
-if [[ -n "$TTY_FD" ]]; then
+if [[ -n "$TTY_FD" && "$TTY_FD" =~ ^[0-9]+$ ]]; then
     exec {TTY_FD}<&-
 fi
 
