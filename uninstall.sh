@@ -13,14 +13,15 @@ info()  { echo -e "${GREEN}[+]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[x]${NC} $*"; exit 1; }
 
+TTY_FD=""
+exec {TTY_FD}</dev/tty 2>/dev/null || TTY_FD=""
+
 ask_yes_no() {
     local prompt="$1"
     local yn=""
 
-    if [[ -t 0 ]]; then
-        read -r -p "$prompt" yn || true
-    elif [[ -r /dev/tty ]]; then
-        read -r -p "$prompt" yn </dev/tty || true
+    if [[ -n "$TTY_FD" && "$TTY_FD" =~ ^[0-9]+$ ]]; then
+        read -r -p "$prompt" yn <&$TTY_FD || true
     else
         warn "No interactive TTY detected — defaulting to No"
     fi
@@ -102,6 +103,10 @@ fi
 # ── Перезагружаем systemd ─────────────────────────────────────────────────────
 
 systemctl daemon-reload
+
+if [[ -n "$TTY_FD" && "$TTY_FD" =~ ^[0-9]+$ ]]; then
+    exec {TTY_FD}<&-
+fi
 
 # ── Готово ────────────────────────────────────────────────────────────────────
 
