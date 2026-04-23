@@ -13,6 +13,21 @@ info()  { echo -e "${GREEN}[+]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[x]${NC} $*"; exit 1; }
 
+ask_yes_no() {
+    local prompt="$1"
+    local yn=""
+
+    if [[ -t 0 ]]; then
+        read -r -p "$prompt" yn || true
+    elif [[ -r /dev/tty ]]; then
+        read -r -p "$prompt" yn </dev/tty || true
+    else
+        warn "No interactive TTY detected — defaulting to No"
+    fi
+
+    [[ "$yn" =~ ^[Yy] ]]
+}
+
 [[ $EUID -ne 0 ]] && error "Run with sudo: sudo bash uninstall.sh"
 
 # ── Определяем реального пользователя (может быть root) ──────────────────────
@@ -66,26 +81,23 @@ rm -f  /usr/lib/systemd/user/usb-auth-guard.service
 
 if [[ -f /etc/usbguard/rules.conf ]]; then
     echo ""
-    read -r -p "  Remove /etc/usbguard/rules.conf (USBGuard policy)? [y/N] " yn
-    case "$yn" in
-        [Yy]*) rm -f /etc/usbguard/rules.conf; info "rules.conf removed." ;;
-        *)     warn "Keeping /etc/usbguard/rules.conf" ;;
-    esac
+    if ask_yes_no "  Remove /etc/usbguard/rules.conf (USBGuard policy)? [y/N] "; then
+        rm -f /etc/usbguard/rules.conf
+        info "rules.conf removed."
+    else
+        warn "Keeping /etc/usbguard/rules.conf"
+    fi
 fi
 
 # ── Удаляем пакеты ────────────────────────────────────────────────────────────
 
 echo ""
-read -r -p "  Remove usbguard package (apt-get remove usbguard)? [y/N] " yn
-case "$yn" in
-    [Yy]*)
-        info "Removing usbguard..."
-        apt-get remove -y usbguard usbguard-dbus 2>/dev/null || true
-        ;;
-    *)
-        warn "Keeping usbguard package"
-        ;;
-esac
+if ask_yes_no "  Remove usbguard package (apt-get remove usbguard)? [y/N] "; then
+    info "Removing usbguard..."
+    apt-get remove -y usbguard usbguard-dbus 2>/dev/null || true
+else
+    warn "Keeping usbguard package"
+fi
 
 # ── Перезагружаем systemd ─────────────────────────────────────────────────────
 
