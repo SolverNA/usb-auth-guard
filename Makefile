@@ -61,6 +61,14 @@ setup-usbguard:
 	systemctl enable --now usbguard usbguard-dbus
 	systemctl restart usbguard usbguard-dbus
 
+	# Restart usb-auth-guard for all logged-in users so they pick up the
+	# new usbguard-dbus instance (the old D-Bus match rule is now stale).
+	@for uid in $$(loginctl list-users 2>/dev/null | awk 'NR>1 && /^[[:space:]]*[0-9]+[[:space:]]/{print $$1}'); do \
+	    user=$$(id -un $$uid 2>/dev/null) || continue; \
+	    systemctl --user -M $$uid@ restart usb-auth-guard 2>/dev/null && \
+	        echo "    Restarted usb-auth-guard for user $$user" || true; \
+	done
+
 	@echo "==> USBGuard configured!"
 	@echo "    Devices connected NOW are trusted. New devices will require auth."
 

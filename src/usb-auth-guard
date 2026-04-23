@@ -95,14 +95,45 @@ def main():
 
     try:
         bus = dbus.SystemBus()
-        proxy = bus.get_object('org.usbguard1', '/org/usbguard1/Devices')
-        iface = dbus.Interface(proxy, dbus_interface='org.usbguard.Devices1')
-        iface.connect_to_signal('DevicePresenceChanged', on_device_presence_changed)
-        log.info('Listening for USBGuard events...')
+        bus.get_name_owner('org.usbguard1')
     except dbus.DBusException as e:
         log.error('Cannot connect to USBGuard D-Bus: %s', e)
         log.error('Run: sudo systemctl start usbguard-dbus')
         sys.exit(1)
+
+    state = {'iface': None}
+
+    def subscribe():
+        proxy = bus.get_object('org.usbguard1', '/org/usbguard1/Devices')
+        iface = dbus.Interface(proxy, dbus_interface='org.usbguard.Devices1')
+        iface.connect_to_signal('DevicePresenceChanged', on_device_presence_changed)
+        state['iface'] = iface
+        log.info('Listening for USBGuard events...')
+
+    try:
+        subscribe()
+    except dbus.DBusException as e:
+        log.error('Cannot subscribe to USBGuard D-Bus signals: %s', e)
+        sys.exit(1)
+
+    # Re-subscribe automatically when usbguard-dbus restarts.
+    # Each restart gives the process a new unique D-Bus name; without re-subscribing
+    # the old match rule is stale and DevicePresenceChanged signals are never received.
+    def on_usbguard_name_changed(new_owner):
+        if new_owner and state['iface'] is None:
+            log.info('USBGuard D-Bus reappeared, re-subscribing...')
+            try:
+                subscribe()
+            except dbus.DBusException as e:
+                log.error('Re-subscribe failed: %s', e)
+        elif not new_owner and state['iface'] is not None:
+            log.warning('USBGuard D-Bus disappeared, waiting for restart...')
+            state['iface'] = None
+
+    # watch_name_owner fires immediately with the current owner; because
+    # subscribe() above already populated state['iface'], the
+    # "new_owner and iface is None" branch is skipped for that initial call.
+    bus.watch_name_owner('org.usbguard1', on_usbguard_name_changed)
 
     loop = GLib.MainLoop()
     try:
