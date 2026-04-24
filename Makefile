@@ -83,7 +83,7 @@ uninstall:
 	@# FIRST: Restore safe policy
 	@if [ -f /etc/usbguard/usbguard-daemon.conf ]; then \
 		sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' /etc/usbguard/usbguard-daemon.conf; \
-		sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=allow/' /etc/usbguard/usbguard-daemon.conf; \
+		sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' /etc/usbguard/usbguard-daemon.conf; \
 	fi
 	systemctl reload usbguard 2>/dev/null || systemctl restart usbguard 2>/dev/null || true
 

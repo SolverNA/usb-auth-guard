@@ -53,7 +53,7 @@ sudo systemctl status usbguard-dbus
 
 ```bash
 # Temporarily allow all devices
-sudo sed -i 's/InsertedDevicePolicy=.*/InsertedDevicePolicy=allow/' /etc/usbguard/usbguard-daemon.conf
+sudo sed -i 's/InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' /etc/usbguard/usbguard-daemon.conf
 sudo systemctl restart usbguard
 
 # Reconnect devices, regenerate rules

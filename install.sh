@@ -71,7 +71,7 @@ rollback() {
     # Restart usbguard with safe policy
     if [[ -f /etc/usbguard/usbguard-daemon.conf ]]; then
         sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' /etc/usbguard/usbguard-daemon.conf || true
-        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=allow/' /etc/usbguard/usbguard-daemon.conf || true
+        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' /etc/usbguard/usbguard-daemon.conf || true
     fi
     systemctl restart usbguard 2>/dev/null || true
 

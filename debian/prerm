@@ -7,7 +7,7 @@ case "$1" in
     CONF=/etc/usbguard/usbguard-daemon.conf
     if [ -f "$CONF" ]; then
         sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' "$CONF" || true
-        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=allow/' "$CONF" || true
+        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' "$CONF" || true
     fi
 
     # Reload usbguard with safe policy (don't stop it)
