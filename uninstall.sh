@@ -1,6 +1,6 @@
 #!/bin/bash
 # usb-auth-guard uninstaller
-# Usage: curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/master/uninstall.sh | sudo bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/SolverNA/usb-auth-guard/master/uninstall.sh | sudo bash
 
 set -euo pipefail
 
@@ -13,64 +13,104 @@ info()  { echo -e "${GREEN}[+]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[x]${NC} $*"; exit 1; }
 
+INSTALL_MARKER="/var/lib/usb-auth-guard/.installed"
+BACKUP_DIR="/var/lib/usb-auth-guard/backup"
+
+# ── TTY handling ───────────────────────────────────────────────────────────────
 TTY_FD=""
-exec {TTY_FD}</dev/tty 2>/dev/null || TTY_FD=""
+if exec {TTY_FD}</dev/tty 2>/dev/null; then
+    : # TTY available
+else
+    TTY_FD=""
+fi
 
 ask_yes_no() {
     local prompt="$1"
+    local default="${2:-n}"
     local yn=""
 
-    if [[ -n "$TTY_FD" && "$TTY_FD" =~ ^[0-9]+$ ]]; then
-        read -r -p "$prompt" yn <&$TTY_FD || true
+    if [[ -n "$TTY_FD" ]]; then
+        read -r -p "$prompt" yn <&"$TTY_FD" || yn=""
     else
-        warn "No interactive TTY detected — defaulting to No"
+        warn "No interactive TTY - using default: $default"
+        yn="$default"
     fi
 
     [[ "$yn" =~ ^[Yy] ]]
 }
 
-[[ $EUID -ne 0 ]] && error "Run with sudo: sudo bash uninstall.sh"
+cleanup_tty() {
+    if [[ -n "$TTY_FD" ]]; then
+        exec {TTY_FD}<&- 2>/dev/null || true
+    fi
+}
+trap cleanup_tty EXIT
 
-# ── Определяем реального пользователя (может быть root) ──────────────────────
+# ── Pre-flight checks ──────────────────────────────────────────────────────────
 
-REAL_USER="${SUDO_USER:-}"
-if [[ -z "$REAL_USER" ]]; then
-    # Запущено напрямую как root (не через sudo от обычного пользователя)
-    REAL_USER="root"
+[[ $EUID -ne 0 ]] && error "Run with sudo: curl -fsSL ... | sudo bash"
+
+# Check if installed
+if [[ ! -f "$INSTALL_MARKER" && ! -f /usr/local/bin/usb-auth-guard ]]; then
+    warn "usb-auth-guard does not appear to be installed."
+    warn "Nothing to uninstall."
+    exit 0
 fi
-REAL_UID=$(id -u "$REAL_USER" 2>/dev/null) || REAL_UID=0
 
-info "Uninstalling usb-auth-guard (installed user: $REAL_USER)..."
+info "Uninstalling usb-auth-guard..."
 
-# ── Останавливаем и отключаем пользовательский сервис ────────────────────────
+# ── FIRST: Restore safe USB policy (before stopping anything) ─────────────────
+
+info "Restoring safe USB policy..."
+CONF=/etc/usbguard/usbguard-daemon.conf
+if [[ -f "$CONF" ]]; then
+    # Make all USB devices work again BEFORE we stop services
+    sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' "$CONF" 2>/dev/null || true
+    sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=allow/' "$CONF" 2>/dev/null || true
+    info "USBGuard policy set to 'allow' - all USB devices will work"
+fi
+
+# Reload usbguard config (without stopping it)
+systemctl reload usbguard 2>/dev/null || \
+    systemctl restart usbguard 2>/dev/null || \
+    warn "Could not reload usbguard config"
+
+# ── Stop user service ──────────────────────────────────────────────────────────
 
 info "Stopping user service..."
-XDG_RUNTIME_DIR=/run/user/$REAL_UID
-if [[ -d "$XDG_RUNTIME_DIR" ]]; then
-    sudo -u "$REAL_USER" XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR \
-        systemctl --user stop usb-auth-guard 2>/dev/null || true
-    sudo -u "$REAL_USER" XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR \
-        systemctl --user disable usb-auth-guard 2>/dev/null || true
-else
-    # XDG_RUNTIME_DIR не существует (нет живой сессии) — удаляем symlink напрямую
-    SYSTEMD_USER_WANTS="/root/.config/systemd/user/default.target.wants"
-    if [[ "$REAL_USER" != "root" ]]; then
-        REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6 2>/dev/null || echo "")
-        SYSTEMD_USER_WANTS="${REAL_HOME}/.config/systemd/user/default.target.wants"
+
+REAL_USER="${SUDO_USER:-}"
+if [[ -n "$REAL_USER" && "$REAL_USER" != "root" ]]; then
+    REAL_UID=$(id -u "$REAL_USER" 2>/dev/null) || REAL_UID=""
+    if [[ -n "$REAL_UID" && -d "/run/user/$REAL_UID" ]]; then
+        sudo -u "$REAL_USER" XDG_RUNTIME_DIR="/run/user/$REAL_UID" \
+            systemctl --user stop usb-auth-guard 2>/dev/null || true
+        sudo -u "$REAL_USER" XDG_RUNTIME_DIR="/run/user/$REAL_UID" \
+            systemctl --user disable usb-auth-guard 2>/dev/null || true
+        info "User service stopped and disabled"
     fi
-    rm -f "${SYSTEMD_USER_WANTS}/usb-auth-guard.service" 2>/dev/null || true
-    warn "No live user session found — disabled service by removing symlink"
 fi
 
-# ── Останавливаем и отключаем системные сервисы ──────────────────────────────
+# Also try to stop for all logged-in users
+for uid_dir in /run/user/*; do
+    [[ -d "$uid_dir" ]] || continue
+    uid=$(basename "$uid_dir")
+    [[ "$uid" =~ ^[0-9]+$ ]] || continue
+    user=$(id -un "$uid" 2>/dev/null) || continue
+    sudo -u "$user" XDG_RUNTIME_DIR="$uid_dir" \
+        systemctl --user stop usb-auth-guard 2>/dev/null || true
+    sudo -u "$user" XDG_RUNTIME_DIR="$uid_dir" \
+        systemctl --user disable usb-auth-guard 2>/dev/null || true
+done
 
-info "Stopping system services..."
-systemctl stop    usbguard-dbus 2>/dev/null || true
-systemctl disable usbguard-dbus 2>/dev/null || true
-systemctl stop    usbguard      2>/dev/null || true
-systemctl disable usbguard      2>/dev/null || true
+# Remove user service symlinks (in case session is not active)
+for home_dir in /home/*; do
+    [[ -d "$home_dir" ]] || continue
+    rm -f "$home_dir/.config/systemd/user/default.target.wants/usb-auth-guard.service" 2>/dev/null || true
+done
+rm -f /root/.config/systemd/user/default.target.wants/usb-auth-guard.service 2>/dev/null || true
 
-# ── Удаляем установленные файлы ───────────────────────────────────────────────
+# ── Remove installed files ─────────────────────────────────────────────────────
 
 info "Removing installed files..."
 rm -f  /usr/local/bin/usb-auth-guard
@@ -78,40 +118,57 @@ rm -rf /usr/local/lib/usb-auth-guard
 rm -f  /usr/share/polkit-1/actions/org.usbauthguard.policy
 rm -f  /usr/lib/systemd/user/usb-auth-guard.service
 
-# ── Удаляем конфиг USBGuard (опционально) ────────────────────────────────────
+# Reload systemd
+systemctl daemon-reload 2>/dev/null || true
 
+# ── Remove installation marker and backups ─────────────────────────────────────
+
+rm -f "$INSTALL_MARKER"
+rm -rf /var/lib/usb-auth-guard
+
+info "Installation files removed"
+
+# ── Optional: Remove usbguard rules ────────────────────────────────────────────
+
+echo ""
 if [[ -f /etc/usbguard/rules.conf ]]; then
-    echo ""
-    if ask_yes_no "  Remove /etc/usbguard/rules.conf (USBGuard policy)? [y/N] "; then
+    if ask_yes_no "  Remove /etc/usbguard/rules.conf (trusted device list)? [y/N] " "n"; then
         rm -f /etc/usbguard/rules.conf
-        info "rules.conf removed."
+        info "rules.conf removed"
     else
-        warn "Keeping /etc/usbguard/rules.conf"
+        info "Keeping rules.conf"
     fi
 fi
 
-# ── Удаляем пакеты ────────────────────────────────────────────────────────────
+# ── Optional: Disable usbguard completely ──────────────────────────────────────
 
 echo ""
-if ask_yes_no "  Remove usbguard package (apt-get remove usbguard)? [y/N] "; then
-    info "Removing usbguard..."
-    apt-get remove -y usbguard usbguard-dbus 2>/dev/null || true
+if ask_yes_no "  Disable usbguard service completely? [y/N] " "n"; then
+    systemctl stop usbguard 2>/dev/null || true
+    systemctl stop usbguard-dbus 2>/dev/null || true
+    systemctl disable usbguard 2>/dev/null || true
+    systemctl disable usbguard-dbus 2>/dev/null || true
+    info "usbguard disabled"
 else
-    warn "Keeping usbguard package"
+    info "Keeping usbguard enabled (but with 'allow' policy - all USB devices work)"
 fi
 
-# ── Перезагружаем systemd ─────────────────────────────────────────────────────
-
-systemctl daemon-reload
-
-if [[ -n "$TTY_FD" && "$TTY_FD" =~ ^[0-9]+$ ]]; then
-    exec {TTY_FD}<&-
-fi
-
-# ── Готово ────────────────────────────────────────────────────────────────────
+# ── Optional: Remove usbguard package ──────────────────────────────────────────
 
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║  usb-auth-guard uninstalled successfully!        ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
+if ask_yes_no "  Remove usbguard package (apt remove usbguard)? [y/N] " "n"; then
+    apt-get remove -y usbguard usbguard-dbus 2>/dev/null || true
+    info "usbguard package removed"
+else
+    info "Keeping usbguard package"
+fi
+
+# ── Done ───────────────────────────────────────────────────────────────────────
+
+echo ""
+echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║  usb-auth-guard uninstalled successfully!                ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
+echo ""
+echo "  All USB devices should now work without password prompts."
 echo ""

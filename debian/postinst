@@ -1,38 +1,60 @@
 #!/bin/bash
 set -e
 
+INSTALL_MARKER="/var/lib/usb-auth-guard/.installed"
+BACKUP_DIR="/var/lib/usb-auth-guard/backup"
+
 case "$1" in
   configure)
-    # Создаём группу usbguard если не существует
+    # Create directories
+    mkdir -p "$BACKUP_DIR"
+
+    # Create usbguard group if missing
     if ! getent group usbguard > /dev/null 2>&1; then
         groupadd --system usbguard
     fi
 
-    # Права на helper (должен быть root:root 755 для pkexec)
+    # Set permissions on helper (must be root:root 755 for pkexec)
     chown root:root /usr/local/lib/usb-auth-guard/helper
     chmod 755 /usr/local/lib/usb-auth-guard/helper
 
-    # Включаем системные сервисы
-    systemctl daemon-reload
-    systemctl enable usbguard usbguard-dbus 2>/dev/null || true
-    systemctl start usbguard usbguard-dbus 2>/dev/null || true
+    # Backup existing configs
+    if [ -f /etc/usbguard/usbguard-daemon.conf ]; then
+        cp /etc/usbguard/usbguard-daemon.conf "$BACKUP_DIR/" 2>/dev/null || true
+    fi
+    if [ -f /etc/usbguard/rules.conf ]; then
+        cp /etc/usbguard/rules.conf "$BACKUP_DIR/" 2>/dev/null || true
+    fi
 
-    # Генерируем правила для текущих устройств если rules.conf пустой
+    # Generate rules for currently connected devices if rules.conf is empty
     if [ ! -s /etc/usbguard/rules.conf ]; then
         echo "Generating USBGuard rules for currently connected devices..."
         usbguard generate-policy > /etc/usbguard/rules.conf 2>/dev/null || true
     fi
 
-    # Сообщение пользователю
+    # Configure usbguard policy (AFTER rules are in place)
+    CONF=/etc/usbguard/usbguard-daemon.conf
+    if [ -f "$CONF" ]; then
+        sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=apply-policy/' "$CONF" || true
+        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=block/' "$CONF" || true
+    fi
+
+    # Enable and start system services
+    systemctl daemon-reload
+    systemctl enable usbguard usbguard-dbus 2>/dev/null || true
+    systemctl restart usbguard usbguard-dbus 2>/dev/null || true
+
+    # Mark installation complete
+    date '+%Y-%m-%d %H:%M:%S' > "$INSTALL_MARKER"
+
+    # User instructions
     echo ""
     echo "usb-auth-guard installed successfully!"
     echo ""
     echo "Enable for your user:"
     echo "  systemctl --user enable --now usb-auth-guard"
     echo ""
-    echo "If usbguard blocked your current devices, run:"
-    echo "  sudo usbguard generate-policy | sudo tee /etc/usbguard/rules.conf"
-    echo "  sudo systemctl restart usbguard"
+    echo "Or log out and log back in for automatic start."
     echo ""
     ;;
 esac

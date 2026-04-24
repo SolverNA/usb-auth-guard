@@ -3,19 +3,39 @@ set -e
 
 case "$1" in
   remove|purge)
-    # Останавливаем user сервис у всех пользователей
-    for uid in $(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $3}'); do
-        systemctl --machine="$(id -un "$uid")@.host" --user stop usb-auth-guard 2>/dev/null || true
-        systemctl --machine="$(id -un "$uid")@.host" --user disable usb-auth-guard 2>/dev/null || true
-    done
-
-    # Restore safe policies to avoid lockout
+    # FIRST: Restore safe policies to prevent USB lockout
     CONF=/etc/usbguard/usbguard-daemon.conf
     if [ -f "$CONF" ]; then
         sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' "$CONF" || true
-        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' "$CONF" || true
+        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=allow/' "$CONF" || true
     fi
-    systemctl disable --now usbguard usbguard-dbus 2>/dev/null || true
+
+    # Reload usbguard with safe policy (don't stop it)
+    systemctl reload usbguard 2>/dev/null || \
+        systemctl restart usbguard 2>/dev/null || true
+
+    # Stop user service for all logged-in users
+    for uid_dir in /run/user/*; do
+        [ -d "$uid_dir" ] || continue
+        uid=$(basename "$uid_dir")
+        echo "$uid" | grep -qE '^[0-9]+$' || continue
+        user=$(id -un "$uid" 2>/dev/null) || continue
+        sudo -u "$user" XDG_RUNTIME_DIR="$uid_dir" \
+            systemctl --user stop usb-auth-guard 2>/dev/null || true
+        sudo -u "$user" XDG_RUNTIME_DIR="$uid_dir" \
+            systemctl --user disable usb-auth-guard 2>/dev/null || true
+    done
+
+    # Remove user service symlinks
+    for home_dir in /home/*; do
+        [ -d "$home_dir" ] || continue
+        rm -f "$home_dir/.config/systemd/user/default.target.wants/usb-auth-guard.service" 2>/dev/null || true
+    done
+    rm -f /root/.config/systemd/user/default.target.wants/usb-auth-guard.service 2>/dev/null || true
+
+    # Remove installation marker
+    rm -f /var/lib/usb-auth-guard/.installed 2>/dev/null || true
+    rm -rf /var/lib/usb-auth-guard 2>/dev/null || true
     ;;
 esac
 

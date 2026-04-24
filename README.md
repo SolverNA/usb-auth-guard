@@ -1,98 +1,115 @@
 # usb-auth-guard
 
-Blocks all USB devices by default and shows a **native polkit password dialog** before allowing any new device — just like `sudo` prompts in KDE/GNOME.
+Blocks all USB devices by default and shows a **native polkit password dialog** before allowing any new device.
 
 Protects against:
-- **BadUSB / Rubber Ducky / O.MG Cable** — HID injection keyboards are blocked until you auth
-- **USB data exfiltration** — drives do nothing without your password
-- **Physical access attacks** — cloning your device's VID:PID doesn't help, it still needs auth
+- **BadUSB / Rubber Ducky / O.MG Cable** — HID injection blocked until auth
+- **USB data exfiltration** — drives require password
+- **Physical access attacks** — VID:PID spoofing doesn't help
 
 ```
-Insert USB → USBGuard blocks at kernel level
-                    ↓
-         usb-auth-guard daemon detects event
-                    ↓
-         Native KDE/GNOME polkit dialog appears
-                    ↓
-    Correct password → device works
-    Cancel / wrong  → device stays dead
+Insert USB → USBGuard blocks it
+                ↓
+      usb-auth-guard detects event
+                ↓
+      Password dialog appears
+                ↓
+  Correct password → device works
+  Cancel / wrong   → device stays blocked
 ```
 
-## Install
-
-### One-liner (Debian / Kali / Ubuntu)
+## Install (Debian / Ubuntu / Kali)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SolVerNA/usb-auth-guard/master/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/SolverNA/usb-auth-guard/master/install.sh | sudo bash
 ```
 
-> **After the script finishes:** log out and log back into your desktop session, **or** open a terminal and run `systemctl --user start usb-auth-guard`.
-> The service needs to start inside your graphical session so that the polkit dialog can appear on screen.
+Then either:
+- **Log out and log back in** (recommended), or
+- Run: `systemctl --user start usb-auth-guard`
 
-### .deb package (build from source)
-
-```bash
-# if needed:
-# sudo apt-get install -y git make dpkg-dev
-git clone https://github.com/SolVerNA/usb-auth-guard
-cd usb-auth-guard
-make deb
-sudo apt install -y ./usb-auth-guard_1.0.0.deb   # installs usbguard and all other dependencies automatically
-sudo make setup-usbguard                           # trust currently connected devices, put USBGuard into block mode
-systemctl --user enable --now usb-auth-guard
-```
-
-### From source
-
-```bash
-git clone https://github.com/SolVerNA/usb-auth-guard
-cd usb-auth-guard
-sudo make install
-sudo make setup-usbguard
-systemctl --user enable --now usb-auth-guard
-```
-
-## Requirements
-
-- `usbguard` + `usbguard-dbus`
-- `python3-dbus`, `python3-gi`
-- `policykit-1` **or** `polkitd` + `pkexec`
-- `curl` (for installer script)
-- systemd + KDE Plasma or GNOME (any polkit agent)
-
-## How it works
-
-| Component | Role |
-|---|---|
-| **USBGuard** | Blocks devices at kernel level via `/sys/.../authorized` |
-| **usbguard-dbus** | Exposes USBGuard events on D-Bus |
-| **usb-auth-guard** | Python daemon listening for `DevicePresenceChanged` |
-| **polkit + pkexec** | Shows native desktop password dialog |
-| **helper** | Root-level helper called by pkexec to run `usbguard allow-device` |
-
-Authorization is **per-session only** — plugging the same device again requires re-auth.
-
-## Logs
-
-```bash
-journalctl --user -u usb-auth-guard -f
-```
+The service needs to start inside your graphical session for the dialog to appear.
 
 ## Uninstall
 
 ```bash
-# from repo directory:
-sudo make uninstall
+curl -fsSL https://raw.githubusercontent.com/SolverNA/usb-auth-guard/master/uninstall.sh | sudo bash
 ```
 
-After uninstall, USBGuard is reset to `allow` mode — all USB devices will work
-normally with no auth dialogs. USBGuard itself is left installed (system package).
+## Troubleshooting
 
-## ⚠️ Important
+### No password prompt appears
 
-Do NOT manually run `apt purge usbguard usbguard-dbus` to uninstall.
-Use `sudo make uninstall` only — it safely removes usb-auth-guard
-without touching system packages that SDDM and polkit depend on.
+```bash
+# Check service status
+systemctl --user status usb-auth-guard
+journalctl --user -u usb-auth-guard -f
+
+# Check usbguard-dbus
+sudo systemctl status usbguard-dbus
+```
+
+### Keyboard/mouse blocked after install
+
+```bash
+# Temporarily allow all devices
+sudo sed -i 's/InsertedDevicePolicy=.*/InsertedDevicePolicy=allow/' /etc/usbguard/usbguard-daemon.conf
+sudo systemctl restart usbguard
+
+# Reconnect devices, regenerate rules
+sudo usbguard generate-policy | sudo tee /etc/usbguard/rules.conf
+
+# Re-enable blocking
+sudo sed -i 's/InsertedDevicePolicy=.*/InsertedDevicePolicy=block/' /etc/usbguard/usbguard-daemon.conf
+sudo systemctl restart usbguard
+```
+
+### View logs
+
+```bash
+journalctl --user -u usb-auth-guard -f   # user service
+sudo journalctl -u usbguard -f           # usbguard
+```
+
+## Alternative install methods
+
+### From source (git clone)
+
+```bash
+git clone https://github.com/SolverNA/usb-auth-guard
+cd usb-auth-guard
+sudo make install
+systemctl --user enable --now usb-auth-guard
+```
+
+### Build .deb package
+
+```bash
+git clone https://github.com/SolverNA/usb-auth-guard
+cd usb-auth-guard
+make deb
+sudo apt install ./usb-auth-guard_1.0.0.deb
+systemctl --user enable --now usb-auth-guard
+```
+
+## How it works
+
+| Component | Role |
+|-----------|------|
+| **USBGuard** | Blocks devices at kernel level |
+| **usbguard-dbus** | Exposes events on D-Bus |
+| **usb-auth-guard** | Python daemon listening for events |
+| **polkit + pkexec** | Native password dialog |
+| **helper** | Root helper for `usbguard allow-device` |
+
+Authorization is **per-session only** — same device requires re-auth next time.
+
+## Requirements
+
+- Debian/Ubuntu/Kali or compatible
+- systemd
+- Python 3 + dbus + gi
+- polkit
 
 ## License
 
