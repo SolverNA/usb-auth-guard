@@ -225,7 +225,7 @@ systemctl restart usbguard 2>/dev/null || {
 }
 systemctl restart usbguard-dbus 2>/dev/null || warn "usbguard-dbus restart failed"
 
-# User service - enable only (will start on next login)
+# User service - enable and try to start
 REAL_USER="${SUDO_USER:-}"
 if [[ -n "$REAL_USER" && "$REAL_USER" != "root" ]]; then
     REAL_UID=$(id -u "$REAL_USER" 2>/dev/null) || REAL_UID=""
@@ -233,11 +233,12 @@ if [[ -n "$REAL_USER" && "$REAL_USER" != "root" ]]; then
         sudo -u "$REAL_USER" XDG_RUNTIME_DIR="/run/user/$REAL_UID" \
             systemctl --user daemon-reload 2>/dev/null || true
         sudo -u "$REAL_USER" XDG_RUNTIME_DIR="/run/user/$REAL_UID" \
-            systemctl --user enable usb-auth-guard 2>/dev/null || \
-            warn "Could not enable user service"
+            systemctl --user enable --now usb-auth-guard 2>/dev/null && \
+            info "User service started" || \
+            warn "Could not start user service - run: systemctl --user start usb-auth-guard"
     else
-        warn "User session not active - enable manually after login:"
-        warn "  systemctl --user enable usb-auth-guard"
+        warn "User session not active - start manually after login:"
+        warn "  systemctl --user enable --now usb-auth-guard"
     fi
 fi
 
@@ -255,10 +256,10 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo -e "${YELLOW}  Next steps:${NC}"
 echo ""
-echo "  1. Log out and log back in (recommended)"
-echo "     OR run now: systemctl --user start usb-auth-guard"
+echo "  1. Plug in a USB device - you should see a password prompt"
 echo ""
-echo "  2. Plug in a USB device - you should see a password prompt"
+echo "  If no prompt appears, run: systemctl --user start usb-auth-guard"
+echo "  Or log out and log back in."
 echo ""
 echo "  Logs:      journalctl --user -u usb-auth-guard -f"
 echo "  Uninstall: curl -fsSL https://raw.githubusercontent.com/SolverNA/usb-auth-guard/master/uninstall.sh | sudo bash"
