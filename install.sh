@@ -100,6 +100,11 @@ rollback() {
     if [[ -f "$rb_conf" ]]; then
         sed -i "s|^#\?PresentDevicePolicy=.*|PresentDevicePolicy=allow|" "$rb_conf" || true
         sed -i "s|^#\?InsertedDevicePolicy=.*|InsertedDevicePolicy=apply-policy|" "$rb_conf" || true
+        if grep -qE "^#?ImplicitPolicyTarget=" "$rb_conf"; then
+            sed -i "s|^#\?ImplicitPolicyTarget=.*|ImplicitPolicyTarget=allow|" "$rb_conf" || true
+        else
+            echo "ImplicitPolicyTarget=allow" >> "$rb_conf"
+        fi
     fi
     systemctl restart usbguard 2>/dev/null || true
 
