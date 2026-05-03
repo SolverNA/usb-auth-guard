@@ -17,6 +17,33 @@ error() { echo -e "${RED}[x]${NC} $*"; exit 1; }
 INSTALL_MARKER="/var/lib/usb-auth-guard/.installed"
 BACKUP_DIR="/var/lib/usb-auth-guard/backup"
 
+# ── Package manager detection ──────────────────────────────────────────────────
+
+if command -v pacman >/dev/null 2>&1; then
+    PKG_MANAGER="pacman"
+elif command -v apt-get >/dev/null 2>&1; then
+    PKG_MANAGER="apt"
+else
+    PKG_MANAGER="unknown"
+fi
+
+pkg_update() {
+    case "$PKG_MANAGER" in
+        pacman) pacman -Sy --noconfirm 2>/dev/null || warn "pacman -Sy failed (continuing)" ;;
+        apt)    apt-get update -qq 2>/dev/null    || warn "apt-get update failed (continuing)" ;;
+        *)      warn "Unknown package manager, skipping cache update" ;;
+    esac
+}
+
+# Returns 0 on success, 1 on failure — callers decide whether to error or warn
+pkg_install() {
+    case "$PKG_MANAGER" in
+        pacman) pacman -S --noconfirm --needed "$@" 2>/dev/null ;;
+        apt)    apt-get install -y "$@" 2>/dev/null ;;
+        *)      warn "Unknown package manager. Install manually: $*"; return 1 ;;
+    esac
+}
+
 # ── TTY handling for pipe mode ─────────────────────────────────────────────────
 TTY_FD=""
 if exec {TTY_FD}</dev/tty 2>/dev/null; then
@@ -100,31 +127,56 @@ if [[ -f /usr/local/bin/usb-auth-guard ]]; then
     exit 1
 fi
 
-command -v python3   >/dev/null || error "python3 not found. Install: apt install python3"
+command -v python3   >/dev/null || error "python3 not found."
 command -v systemctl >/dev/null || error "systemd not found. This tool requires systemd."
+
+info "Detected package manager: $PKG_MANAGER"
 
 # ── Dependencies ───────────────────────────────────────────────────────────────
 
 info "Installing dependencies..."
-apt-get update -qq 2>/dev/null || warn "apt-get update failed (continuing)"
+pkg_update
 
-apt-get install -y usbguard python3-dbus python3-gi curl 2>/dev/null || \
-    error "Failed to install dependencies. Check your internet connection."
+if [[ "$PKG_MANAGER" == "pacman" ]]; then
+    # Arch / Manjaro package names
+    pkg_install usbguard python-dbus python-gobject curl || \
+        error "Failed to install dependencies. Check your internet connection."
 
-# polkit package
-apt-get install -y policykit-1 2>/dev/null || \
-apt-get install -y polkitd pkexec 2>/dev/null || \
-    error "Could not install polkit."
+    # polkit is usually pre-installed on KDE Plasma; install if missing
+    pkg_install polkit || warn "polkit install failed (may already be installed)"
+
+    # On Arch, usbguard-dbus service is bundled with the usbguard package
+    info "usbguard-dbus is bundled with usbguard on Arch/Manjaro - OK"
+
+    # Dialog tools (optional — polkit dialogs work without these)
+    pkg_install kde-cli-tools || \
+        pkg_install zenity     || \
+        warn "kdialog/zenity not found - polkit dialogs still work"
+
+elif [[ "$PKG_MANAGER" == "apt" ]]; then
+    # Debian / Ubuntu package names
+    pkg_install usbguard python3-dbus python3-gi curl || \
+        error "Failed to install dependencies. Check your internet connection."
+
+    # polkit package (name differs across Ubuntu versions)
+    pkg_install policykit-1 || \
+        pkg_install polkitd pkexec || \
+        error "Could not install polkit."
+
+    # Dialog tools (optional)
+    pkg_install kde-cli-tools || \
+        pkg_install zenity      || \
+        warn "kdialog/zenity not found - polkit dialogs still work"
+
+    # usbguard-dbus may be a separate package on Debian/Ubuntu
+    pkg_install usbguard-dbus || \
+        info "usbguard-dbus bundled in usbguard - OK"
+else
+    warn "Unsupported package manager. Make sure these are installed manually:"
+    warn "  usbguard, python-dbus (or python3-dbus), python-gobject (or python3-gi), polkit, curl"
+fi
+
 command -v pkexec >/dev/null || error "pkexec not found after installation."
-
-# Dialog tools (optional)
-apt-get install -y kde-cli-tools 2>/dev/null || \
-apt-get install -y zenity 2>/dev/null || \
-    warn "kdialog/zenity not found - polkit dialogs still work"
-
-# usbguard-dbus (may be bundled)
-apt-get install -y usbguard-dbus 2>/dev/null || \
-    info "usbguard-dbus bundled in usbguard - OK"
 
 # ── Create directories and backup ─────────────────────────────────────────────
 
@@ -216,14 +268,14 @@ systemctl daemon-reload
 
 # Enable and start system services
 systemctl enable usbguard 2>/dev/null || warn "Could not enable usbguard"
-systemctl enable usbguard-dbus 2>/dev/null || warn "Could not enable usbguard-dbus"
+systemctl enable usbguard-dbus 2>/dev/null || warn "Could not enable usbguard-dbus (may not exist as a separate unit)"
 
 # Restart to apply new config
 systemctl restart usbguard 2>/dev/null || {
     warn "Failed to restart usbguard - attempting rollback"
     rollback
 }
-systemctl restart usbguard-dbus 2>/dev/null || warn "usbguard-dbus restart failed"
+systemctl restart usbguard-dbus 2>/dev/null || warn "usbguard-dbus restart failed (may be bundled)"
 
 # User service - enable and try to start
 REAL_USER="${SUDO_USER:-}"

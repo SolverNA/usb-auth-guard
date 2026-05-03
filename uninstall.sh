@@ -16,6 +16,24 @@ error() { echo -e "${RED}[x]${NC} $*"; exit 1; }
 INSTALL_MARKER="/var/lib/usb-auth-guard/.installed"
 BACKUP_DIR="/var/lib/usb-auth-guard/backup"
 
+# ── Package manager detection ──────────────────────────────────────────────────
+
+if command -v pacman >/dev/null 2>&1; then
+    PKG_MANAGER="pacman"
+elif command -v apt-get >/dev/null 2>&1; then
+    PKG_MANAGER="apt"
+else
+    PKG_MANAGER="unknown"
+fi
+
+pkg_remove() {
+    case "$PKG_MANAGER" in
+        pacman) pacman -R --noconfirm "$@" 2>/dev/null || true ;;
+        apt)    apt-get remove -y "$@" 2>/dev/null || true ;;
+        *)      warn "Unknown package manager. Remove manually: $*" ;;
+    esac
+}
+
 # ── TTY handling ───────────────────────────────────────────────────────────────
 TTY_FD=""
 if exec {TTY_FD}</dev/tty 2>/dev/null; then
@@ -58,6 +76,7 @@ if [[ ! -f "$INSTALL_MARKER" && ! -f /usr/local/bin/usb-auth-guard ]]; then
 fi
 
 info "Uninstalling usb-auth-guard..."
+info "Detected package manager: $PKG_MANAGER"
 
 # ── FIRST: Restore safe USB policy (before stopping anything) ─────────────────
 
@@ -156,8 +175,14 @@ fi
 # ── Optional: Remove usbguard package ──────────────────────────────────────────
 
 echo ""
-if ask_yes_no "  Remove usbguard package (apt remove usbguard)? [y/N] " "n"; then
-    apt-get remove -y usbguard usbguard-dbus 2>/dev/null || true
+if ask_yes_no "  Remove usbguard package? [y/N] " "n"; then
+    if [[ "$PKG_MANAGER" == "pacman" ]]; then
+        pkg_remove usbguard
+    elif [[ "$PKG_MANAGER" == "apt" ]]; then
+        pkg_remove usbguard usbguard-dbus
+    else
+        warn "Unknown package manager. Remove usbguard manually."
+    fi
     info "usbguard package removed"
 else
     info "Keeping usbguard package"
