@@ -84,8 +84,9 @@ info "Restoring safe USB policy..."
 CONF=/etc/usbguard/usbguard-daemon.conf
 if [[ -f "$CONF" ]]; then
     # Make all USB devices work again BEFORE we stop services
-    sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' "$CONF" 2>/dev/null || true
-    sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' "$CONF" 2>/dev/null || true
+    # Handles commented-out, existing, and missing keys
+    sed -i "s|^#\?PresentDevicePolicy=.*|PresentDevicePolicy=allow|" "$CONF" 2>/dev/null || true
+    sed -i "s|^#\?InsertedDevicePolicy=.*|InsertedDevicePolicy=apply-policy|" "$CONF" 2>/dev/null || true
     info "USBGuard policy set to 'allow' - all USB devices will work"
 fi
 

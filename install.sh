@@ -96,9 +96,10 @@ rollback() {
     rm -f "$INSTALL_MARKER"
 
     # Restart usbguard with safe policy
-    if [[ -f /etc/usbguard/usbguard-daemon.conf ]]; then
-        sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' /etc/usbguard/usbguard-daemon.conf || true
-        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' /etc/usbguard/usbguard-daemon.conf || true
+    local rb_conf=/etc/usbguard/usbguard-daemon.conf
+    if [[ -f "$rb_conf" ]]; then
+        sed -i "s|^#\?PresentDevicePolicy=.*|PresentDevicePolicy=allow|" "$rb_conf" || true
+        sed -i "s|^#\?InsertedDevicePolicy=.*|InsertedDevicePolicy=apply-policy|" "$rb_conf" || true
     fi
     systemctl restart usbguard 2>/dev/null || true
 
@@ -149,8 +150,9 @@ if [[ "$PKG_MANAGER" == "pacman" ]]; then
     info "usbguard-dbus is bundled with usbguard on Arch/Manjaro - OK"
 
     # Dialog tools (optional — polkit dialogs work without these)
-    pkg_install kde-cli-tools || \
-        pkg_install zenity     || \
+    # On Arch/Manjaro, kdialog is a separate package (not part of kde-cli-tools)
+    pkg_install kdialog  || \
+        pkg_install zenity || \
         warn "kdialog/zenity not found - polkit dialogs still work"
 
 elif [[ "$PKG_MANAGER" == "apt" ]]; then
@@ -255,9 +257,17 @@ rm -rf "$INSTALL_DIR"
 
 CONF=/etc/usbguard/usbguard-daemon.conf
 if [[ -f "$CONF" ]]; then
-    # Set blocking policy - safe now because rules.conf has our devices
-    sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=apply-policy/' "$CONF" || true
-    sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=block/' "$CONF" || true
+    # Set blocking policy — handles commented-out, existing, and missing keys
+    set_conf_key() {
+        local key="$1" val="$2"
+        if grep -qE "^#?${key}=" "$CONF"; then
+            sed -i "s|^#\?${key}=.*|${key}=${val}|" "$CONF"
+        else
+            echo "${key}=${val}" >> "$CONF"
+        fi
+    }
+    set_conf_key PresentDevicePolicy apply-policy
+    set_conf_key InsertedDevicePolicy block
     info "USBGuard configured: new devices will be blocked until authorized"
 fi
 
