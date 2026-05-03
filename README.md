@@ -18,7 +18,17 @@ Insert USB → USBGuard blocks it
   Cancel / wrong   → device stays blocked
 ```
 
-## Install (Debian / Ubuntu / Kali)
+## Supported distributions
+
+| Distro | Status |
+|--------|--------|
+| Debian / Ubuntu / Kali | ✅ Supported |
+| Arch Linux / Manjaro | ✅ Supported |
+| Other systemd-based | ⚠️ May work (manual dependency install required) |
+
+The installer auto-detects `pacman` or `apt-get` and uses the correct package names.
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SolverNA/usb-auth-guard/master/install.sh | sudo bash
@@ -52,15 +62,15 @@ sudo systemctl status usbguard-dbus
 ### Keyboard/mouse blocked after install
 
 ```bash
-# Temporarily allow all devices
-sudo sed -i 's/InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' /etc/usbguard/usbguard-daemon.conf
+# Allow all devices temporarily
+sudo sed -i 's/ImplicitPolicyTarget=.*/ImplicitPolicyTarget=allow/' /etc/usbguard/usbguard-daemon.conf
 sudo systemctl restart usbguard
 
 # Reconnect devices, regenerate rules
 sudo usbguard generate-policy | sudo tee /etc/usbguard/rules.conf
 
 # Re-enable blocking
-sudo sed -i 's/InsertedDevicePolicy=.*/InsertedDevicePolicy=block/' /etc/usbguard/usbguard-daemon.conf
+sudo sed -i 's/ImplicitPolicyTarget=.*/ImplicitPolicyTarget=block/' /etc/usbguard/usbguard-daemon.conf
 sudo systemctl restart usbguard
 ```
 
@@ -82,7 +92,7 @@ sudo make install
 systemctl --user enable --now usb-auth-guard
 ```
 
-### Build .deb package
+### Build .deb package (Debian/Ubuntu only)
 
 ```bash
 git clone https://github.com/SolverNA/usb-auth-guard
@@ -106,10 +116,13 @@ Authorization is **per-session only** — same device requires re-auth next time
 
 ## Requirements
 
-- Debian/Ubuntu/Kali or compatible
 - systemd
-- Python 3 + dbus + gi
-- polkit
+- Python 3
+- polkit / pkexec
+- **Arch / Manjaro:** `usbguard` `python-dbus` `python-gobject`
+- **Debian / Ubuntu:** `usbguard` `python3-dbus` `python3-gi`
+
+All dependencies are installed automatically by the installer.
 
 ## License
 
