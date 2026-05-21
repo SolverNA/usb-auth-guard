@@ -13,6 +13,7 @@ from gi.repository import GLib
 import subprocess
 import os
 import sys
+import time
 import logging
 import re
 
@@ -23,6 +24,17 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 CURRENT_USER = os.environ.get('USER') or os.environ.get('LOGNAME', 'root')
+
+HELPER_POLKIT  = '/usr/local/lib/usb-auth-guard/helper'
+HELPER_TRUSTED = '/usr/local/lib/usb-auth-guard/helper-trusted'
+
+# After successful polkit auth, re-enumerations of the same VID:PID within this
+# window are auto-allowed via sudo NOPASSWD (no popup). Handles devices like
+# iPhones that re-enumerate several times while switching USB modes.
+TRUST_WINDOW_SECONDS = 60
+
+# {vid_pid: last_authorized_timestamp}
+_trust_window: dict[str, float] = {}
 
 
 def get_env():
@@ -41,7 +53,7 @@ def allow_device_via_polkit(device_id: int, device_name: str) -> bool:
             [
                 'pkexec',
                 '--disable-internal-agent',
-                '/usr/local/lib/usb-auth-guard/helper',
+                HELPER_POLKIT,
                 str(device_id)
             ],
             capture_output=True,
@@ -64,6 +76,29 @@ def allow_device_via_polkit(device_id: int, device_name: str) -> bool:
         return False
 
 
+def allow_device_via_sudo(device_id: int, device_name: str) -> bool:
+    """Fast path for devices already authorized in the trust window."""
+    try:
+        result = subprocess.run(
+            ['sudo', '-n', HELPER_TRUSTED, str(device_id)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            log.info('Device %d "%s" auto-allowed (trust window)', device_id, device_name)
+            return True
+        log.warning('Trusted helper failed for device %d (exit=%d): %s',
+                    device_id, result.returncode, result.stderr.strip())
+        return False
+    except subprocess.TimeoutExpired:
+        log.warning('Trusted helper timed out for device %d', device_id)
+        return False
+    except Exception as e:
+        log.error('sudo helper-trusted error: %s', e)
+        return False
+
+
 def parse_device_name(device_rule: str) -> str:
     m = re.search(r'name\s+"([^"]+)"', str(device_rule))
     if m and m.group(1).strip():
@@ -72,6 +107,25 @@ def parse_device_name(device_rule: str) -> str:
     if m:
         return f'USB Device {m.group(1)}'
     return 'Unknown USB Device'
+
+
+def parse_vid_pid(device_rule: str) -> str | None:
+    m = re.search(r'\bid\s+([0-9a-fA-F]{4}:[0-9a-fA-F]{4})\b', str(device_rule))
+    return m.group(1).lower() if m else None
+
+
+def is_recently_trusted(vid_pid: str) -> bool:
+    ts = _trust_window.get(vid_pid)
+    if ts is None:
+        return False
+    if time.monotonic() - ts > TRUST_WINDOW_SECONDS:
+        del _trust_window[vid_pid]
+        return False
+    return True
+
+
+def mark_trusted(vid_pid: str) -> None:
+    _trust_window[vid_pid] = time.monotonic()
 
 
 def on_device_presence_changed(device_id, event_type, target, device_rule, *args):
@@ -83,9 +137,21 @@ def on_device_presence_changed(device_id, event_type, target, device_rule, *args
     if int(target) != BLOCK:
         return
 
+    dev_id = int(device_id)
     device_name = parse_device_name(device_rule)
-    log.info('New blocked device: id=%d name="%s"', int(device_id), device_name)
-    allow_device_via_polkit(int(device_id), device_name)
+    vid_pid = parse_vid_pid(device_rule)
+
+    if vid_pid and is_recently_trusted(vid_pid):
+        log.info('Blocked device id=%d name="%s" vid:pid=%s — within trust window',
+                 dev_id, device_name, vid_pid)
+        if allow_device_via_sudo(dev_id, device_name):
+            mark_trusted(vid_pid)  # refresh timestamp
+            return
+        log.info('Falling back to polkit prompt for device %d', dev_id)
+
+    log.info('New blocked device: id=%d name="%s"', dev_id, device_name)
+    if allow_device_via_polkit(dev_id, device_name) and vid_pid:
+        mark_trusted(vid_pid)
 
 
 def main():

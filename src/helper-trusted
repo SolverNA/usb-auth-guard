@@ -1,0 +1,22 @@
+#!/bin/bash
+# usb-auth-guard-helper-trusted
+# Fast-path helper for devices already authorized within the daemon's
+# trust window. Invoked via sudo NOPASSWD — see /etc/sudoers.d/usb-auth-guard.
+# Same security profile as the polkit helper: authorization is per-session,
+# not persisted to rules.conf.
+
+set -euo pipefail
+
+DEVICE_ID="${1:-}"
+
+if [[ -z "$DEVICE_ID" ]]; then
+    echo "Usage: usb-auth-guard-helper-trusted <device_id>" >&2
+    exit 1
+fi
+
+if ! [[ "$DEVICE_ID" =~ ^[0-9]+$ ]]; then
+    echo "Error: device_id must be a number" >&2
+    exit 1
+fi
+
+exec usbguard allow-device "$DEVICE_ID"

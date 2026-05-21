@@ -1,0 +1,6 @@
+# usb-auth-guard: allow the desktop user to call helper-trusted without password.
+# The daemon only invokes this fast-path inside the in-memory trust window
+# (~60s after a successful polkit authentication for the same VID:PID).
+# Installed to /etc/sudoers.d/usb-auth-guard with mode 0440.
+# {{USER}} is substituted at install time.
+{{USER}} ALL=(root) NOPASSWD: /usr/local/lib/usb-auth-guard/helper-trusted

@@ -93,6 +93,7 @@ rollback() {
     rm -rf /usr/local/lib/usb-auth-guard
     rm -f /usr/share/polkit-1/actions/org.usbauthguard.policy
     rm -f /usr/lib/systemd/user/usb-auth-guard.service
+    rm -f /etc/sudoers.d/usb-auth-guard
     rm -f "$INSTALL_MARKER"
 
     # Restart usbguard with safe policy
@@ -206,8 +207,10 @@ REPO_URL="https://raw.githubusercontent.com/SolverNA/usb-auth-guard/master"
 info "Downloading files..."
 curl -fsSL "$REPO_URL/src/usb-auth-guard"          -o "$INSTALL_DIR/usb-auth-guard" || error "Download failed"
 curl -fsSL "$REPO_URL/src/helper"                  -o "$INSTALL_DIR/helper" || error "Download failed"
+curl -fsSL "$REPO_URL/src/helper-trusted"          -o "$INSTALL_DIR/helper-trusted" || error "Download failed"
 curl -fsSL "$REPO_URL/src/org.usbauthguard.policy" -o "$INSTALL_DIR/org.usbauthguard.policy" || error "Download failed"
 curl -fsSL "$REPO_URL/src/usb-auth-guard.service"  -o "$INSTALL_DIR/usb-auth-guard.service" || error "Download failed"
+curl -fsSL "$REPO_URL/src/usb-auth-guard.sudoers"  -o "$INSTALL_DIR/usb-auth-guard.sudoers" || error "Download failed"
 
 # ── Generate rules FIRST (before any blocking) ────────────────────────────────
 
@@ -253,8 +256,29 @@ info "Rules saved to /etc/usbguard/rules.conf"
 info "Installing files..."
 install -Dm755 "$INSTALL_DIR/usb-auth-guard"          /usr/local/bin/usb-auth-guard
 install -Dm755 "$INSTALL_DIR/helper"                  /usr/local/lib/usb-auth-guard/helper
+install -Dm755 "$INSTALL_DIR/helper-trusted"          /usr/local/lib/usb-auth-guard/helper-trusted
 install -Dm644 "$INSTALL_DIR/org.usbauthguard.policy" /usr/share/polkit-1/actions/org.usbauthguard.policy
 install -Dm644 "$INSTALL_DIR/usb-auth-guard.service"  /usr/lib/systemd/user/usb-auth-guard.service
+
+# ── Install sudoers entry for helper-trusted (trust-window fast path) ─────────
+SUDOERS_USER="${SUDO_USER:-}"
+if [[ -n "$SUDOERS_USER" && "$SUDOERS_USER" != "root" ]]; then
+    SUDOERS_TMP="$(mktemp)"
+    # Substitute {{USER}} placeholder
+    sed "s|{{USER}}|${SUDOERS_USER}|g" "$INSTALL_DIR/usb-auth-guard.sudoers" > "$SUDOERS_TMP"
+    # Validate before installing — refuse to write a broken sudoers file
+    if visudo -c -f "$SUDOERS_TMP" >/dev/null 2>&1; then
+        install -Dm440 "$SUDOERS_TMP" /etc/sudoers.d/usb-auth-guard
+        info "Installed sudoers entry for user $SUDOERS_USER (trust-window fast path)"
+    else
+        warn "sudoers validation failed - skipping fast-path install"
+        warn "Trust window will not work; every re-enumeration will prompt"
+    fi
+    rm -f "$SUDOERS_TMP"
+else
+    warn "Could not determine the desktop user (SUDO_USER unset)"
+    warn "Skipping sudoers entry - trust-window fast path disabled"
+fi
 
 rm -rf "$INSTALL_DIR"
 

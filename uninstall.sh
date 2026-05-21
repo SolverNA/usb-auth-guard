@@ -145,6 +145,7 @@ rm -f  /usr/local/bin/usb-auth-guard
 rm -rf /usr/local/lib/usb-auth-guard
 rm -f  /usr/share/polkit-1/actions/org.usbauthguard.policy
 rm -f  /usr/lib/systemd/user/usb-auth-guard.service
+rm -f  /etc/sudoers.d/usb-auth-guard
 
 # Reload systemd
 systemctl daemon-reload 2>/dev/null || true

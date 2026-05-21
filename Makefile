@@ -39,10 +39,26 @@ install:
 	@# Install files
 	install -Dm755 src/usb-auth-guard     $(DESTDIR)$(PREFIX)/bin/usb-auth-guard
 	install -Dm755 src/helper             $(DESTDIR)$(PREFIX)/lib/usb-auth-guard/helper
+	install -Dm755 src/helper-trusted     $(DESTDIR)$(PREFIX)/lib/usb-auth-guard/helper-trusted
 	install -Dm644 src/org.usbauthguard.policy \
 	    $(DESTDIR)/usr/share/polkit-1/actions/org.usbauthguard.policy
 	install -Dm644 src/usb-auth-guard.service \
 	    $(DESTDIR)/usr/lib/systemd/user/usb-auth-guard.service
+
+	@# Install sudoers entry (substitute $$SUDO_USER, validate with visudo)
+	@if [ -n "$$SUDO_USER" ] && [ "$$SUDO_USER" != "root" ]; then \
+		tmp=$$(mktemp); \
+		sed "s|{{USER}}|$$SUDO_USER|g" src/usb-auth-guard.sudoers > $$tmp; \
+		if visudo -c -f $$tmp >/dev/null 2>&1; then \
+			install -Dm440 $$tmp $(DESTDIR)/etc/sudoers.d/usb-auth-guard; \
+			echo "==> Installed sudoers entry for $$SUDO_USER"; \
+		else \
+			echo "==> sudoers validation failed, skipping fast-path"; \
+		fi; \
+		rm -f $$tmp; \
+	else \
+		echo "==> SUDO_USER unset, skipping sudoers entry"; \
+	fi
 
 	@# Create usbguard group
 	@getent group usbguard > /dev/null 2>&1 || groupadd --system usbguard
@@ -96,6 +112,7 @@ uninstall:
 	rm -rf $(PREFIX)/lib/usb-auth-guard
 	rm -f  /usr/share/polkit-1/actions/org.usbauthguard.policy
 	rm -f  /usr/lib/systemd/user/usb-auth-guard.service
+	rm -f  /etc/sudoers.d/usb-auth-guard
 
 	@# Remove marker
 	rm -f $(INSTALL_MARKER)
