@@ -5,7 +5,12 @@ Blocks all USB devices by default and shows a **native polkit password dialog** 
 Protects against:
 - **BadUSB / Rubber Ducky / O.MG Cable** — HID injection blocked until auth
 - **USB data exfiltration** — drives require password
-- **Physical access attacks** — VID:PID spoofing doesn't help
+- **Physical access attacks** — every new device is blocked until you authenticate
+
+> **Trust window:** after you authorize a device, re-insertions of the *same VID:PID*
+> are auto-allowed for 60s without a prompt (so devices like iPhones that re-enumerate
+> while switching modes don't nag you). Within that window a spoofed VID:PID would be
+> auto-allowed — it's a deliberate convenience/security trade-off.
 
 ```
 Insert USB → USBGuard blocks it

@@ -167,12 +167,23 @@ def main():
         log.error('Run: sudo systemctl start usbguard-dbus')
         sys.exit(1)
 
-    state = {'iface': None}
+    state = {'iface': None, 'match': None}
 
     def subscribe():
+        # Drop any stale signal match from a previous owner before adding a new
+        # one. connect_to_signal() installs a match rule that survives the old
+        # owner's disappearance; without removing it, rules accumulate on every
+        # usbguard-dbus restart (and could double-fire depending on dbus-python).
+        if state['match'] is not None:
+            try:
+                state['match'].remove()
+            except Exception:
+                pass
+            state['match'] = None
         proxy = bus.get_object('org.usbguard1', '/org/usbguard1/Devices')
         iface = dbus.Interface(proxy, dbus_interface='org.usbguard.Devices1')
-        iface.connect_to_signal('DevicePresenceChanged', on_device_presence_changed)
+        state['match'] = iface.connect_to_signal(
+            'DevicePresenceChanged', on_device_presence_changed)
         state['iface'] = iface
         log.info('Listening for USBGuard events...')
 
