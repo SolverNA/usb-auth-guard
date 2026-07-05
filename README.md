@@ -7,16 +7,20 @@ Protects against:
 - **USB data exfiltration** — drives require password
 - **Physical access attacks** — every new device is blocked until you authenticate
 
-> **Trust windows:** after you authorize a device, re-insertions are auto-allowed
-> briefly so re-enumerating devices don't nag you:
-> - **Same VID:PID — 60s** (iPhones etc. re-enumerate while switching modes).
+> **Trust windows:** the grace clock starts when an authorized device is
+> **unplugged**; a matching re-insertion within the window skips the password:
+> - **Same VID:PID — 60s**, on any port (unplug/replug a stick, iPhone switching
+>   modes).
 > - **Same physical port — 5s** (firmware flashing drops the device and brings it
->   back on the same socket while *changing* its VID:PID: bootloader/DFU/app modes).
+>   back on the same socket with a *changed* VID:PID: bootloader/DFU/app modes).
 >
-> The port window is intentionally short: trusting a socket means anything plugged
-> there is allowed, so 5s only bridges the sub-second re-enumeration gap — not long
-> enough to pull the real device and swap in a BadUSB on the same port. Every other
-> port still prompts. It's a deliberate convenience/security trade-off.
+> The clock deliberately starts at **unplug**, not at authorization — a device can
+> stay connected through a long flash and only re-enumerate at the very end. The
+> port window is short on purpose: trusting a socket auto-allows anything plugged
+> there, so 5s only bridges the re-enumeration gap, not long enough to pull the
+> device and swap in a BadUSB on the same port. Only an *already-authorized*
+> device's removal arms a window, and every other port still prompts. It's a
+> deliberate convenience/security trade-off.
 
 ```
 Insert USB → USBGuard blocks it

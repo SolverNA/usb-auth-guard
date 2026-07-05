@@ -28,24 +28,33 @@ CURRENT_USER = os.environ.get('USER') or os.environ.get('LOGNAME', 'root')
 HELPER_POLKIT  = '/usr/local/lib/usb-auth-guard/helper'
 HELPER_TRUSTED = '/usr/local/lib/usb-auth-guard/helper-trusted'
 
-# After a successful auth, re-insertions are auto-allowed via sudo NOPASSWD (no
-# popup) for a short window, so devices that re-enumerate don't nag the user.
+# After a device is authorized, a re-insertion is allowed without a popup for a
+# short grace period — but the clock starts when the device is UNPLUGGED and
+# measures the remove→re-insert gap. Starting it at auth time would be wrong: a
+# device can sit plugged in through a long flash and only re-enumerate at the
+# very end, by which point an auth-time window would have long expired.
 #
-# Two independent windows, checked with OR:
-#   VID:PID (60s) — iPhones etc. re-enumerate several times keeping the same id.
-#   Port    (5s)  — firmware flashing makes a device drop and reappear on the
-#     SAME physical port while CHANGING its VID:PID (bootloader/DFU/app modes),
-#     so the VID:PID window never matches. Keyed on the physical port path
-#     (via-port) instead. Kept deliberately short: trusting a socket means
-#     ANYTHING plugged there is allowed, so we only want to bridge the
-#     sub-second re-enumeration gap — not a window long enough to pull the real
-#     device and swap in a BadUSB on the same port.
+# Two independent windows, checked with OR on insert:
+#   VID:PID (60s) — same id re-inserted on ANY port (unplug/replug a stick,
+#     iPhone switching modes). A spoofed VID:PID within 60s of removal also
+#     passes — documented convenience/security trade-off.
+#   Port (5s) — SAME physical port (via-port), for firmware flashing where the
+#     device reappears on the same socket with a DIFFERENT VID:PID
+#     (bootloader/DFU/app). Short on purpose: trusting a socket auto-allows
+#     anything plugged there, so 5s only bridges the re-enumeration gap — not
+#     long enough to pull the device and swap in a BadUSB on the same port.
 TRUST_WINDOW_SECONDS      = 60
 PORT_TRUST_WINDOW_SECONDS = 5
 
-# {vid_pid: last_authorized_timestamp} and {via_port: last_authorized_timestamp}
-_trust_window: dict[str, float] = {}
-_port_trust_window: dict[str, float] = {}
+# Identities authorized this session. A window is armed only when an *authorized*
+# device is removed — so unplugging a still-blocked device can't arm a window and
+# get its replacement auto-allowed without a password.
+_authorized_vidpid: set[str] = set()
+_authorized_port: set[str] = set()
+
+# Armed on REMOVAL of an authorized device; value is the removal timestamp.
+_trust_window: dict[str, float] = {}       # vid_pid  -> removed_at
+_port_trust_window: dict[str, float] = {}  # via_port -> removed_at
 
 
 def get_env():
@@ -149,38 +158,60 @@ def mark_trusted(store: dict[str, float], key: str | None) -> None:
         store[key] = time.monotonic()
 
 
+def mark_authorized(vid_pid: str | None, via_port: str | None) -> None:
+    """Device is authorized and currently present: remember its identity and
+    cancel any running remove-countdown (the grace clock only matters once the
+    device is unplugged again)."""
+    if vid_pid is not None:
+        _authorized_vidpid.add(vid_pid)
+        _trust_window.pop(vid_pid, None)
+    if via_port is not None:
+        _authorized_port.add(via_port)
+        _port_trust_window.pop(via_port, None)
+
+
 def on_device_presence_changed(device_id, event_type, target, device_rule, *args):
     INSERT = 1
+    REMOVE = 3
     BLOCK  = 1
 
-    if int(event_type) != INSERT:
+    ev = int(event_type)
+    vid_pid = parse_vid_pid(device_rule)
+    via_port = parse_via_port(device_rule)
+
+    # An authorized device was unplugged: start the grace clock now. The gap
+    # until it re-appears (re-enumeration during flashing, or a deliberate
+    # replug) is what we auto-allow. Only authorized devices arm a window.
+    if ev == REMOVE:
+        if vid_pid in _authorized_vidpid:
+            mark_trusted(_trust_window, vid_pid)
+        if via_port in _authorized_port:
+            mark_trusted(_port_trust_window, via_port)
+        return
+
+    if ev != INSERT:
         return
     if int(target) != BLOCK:
         return
 
     dev_id = int(device_id)
     device_name = parse_device_name(device_rule)
-    vid_pid = parse_vid_pid(device_rule)
-    via_port = parse_via_port(device_rule)
 
     trusted_vid  = is_recently_trusted(_trust_window, vid_pid, TRUST_WINDOW_SECONDS)
     trusted_port = is_recently_trusted(_port_trust_window, via_port, PORT_TRUST_WINDOW_SECONDS)
 
     if trusted_vid or trusted_port:
         reason = 'vid:pid' if trusted_vid else 'port'
-        log.info('Blocked device id=%d name="%s" vid:pid=%s port=%s — within %s trust window',
+        log.info('Blocked device id=%d name="%s" vid:pid=%s port=%s — within %s grace window',
                  dev_id, device_name, vid_pid, via_port, reason)
         if allow_device_via_sudo(dev_id, device_name):
-            # Refresh both windows so a chain of re-enumerations keeps flowing.
-            mark_trusted(_trust_window, vid_pid)
-            mark_trusted(_port_trust_window, via_port)
+            mark_authorized(vid_pid, via_port)
             return
         log.info('Falling back to polkit prompt for device %d', dev_id)
 
     log.info('New blocked device: id=%d name="%s"', dev_id, device_name)
     if allow_device_via_polkit(dev_id, device_name):
-        mark_trusted(_trust_window, vid_pid)
-        mark_trusted(_port_trust_window, via_port)
+        mark_authorized(vid_pid, via_port)
 
 
 def main():
