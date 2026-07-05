@@ -7,10 +7,16 @@ Protects against:
 - **USB data exfiltration** — drives require password
 - **Physical access attacks** — every new device is blocked until you authenticate
 
-> **Trust window:** after you authorize a device, re-insertions of the *same VID:PID*
-> are auto-allowed for 60s without a prompt (so devices like iPhones that re-enumerate
-> while switching modes don't nag you). Within that window a spoofed VID:PID would be
-> auto-allowed — it's a deliberate convenience/security trade-off.
+> **Trust windows:** after you authorize a device, re-insertions are auto-allowed
+> briefly so re-enumerating devices don't nag you:
+> - **Same VID:PID — 60s** (iPhones etc. re-enumerate while switching modes).
+> - **Same physical port — 5s** (firmware flashing drops the device and brings it
+>   back on the same socket while *changing* its VID:PID: bootloader/DFU/app modes).
+>
+> The port window is intentionally short: trusting a socket means anything plugged
+> there is allowed, so 5s only bridges the sub-second re-enumeration gap — not long
+> enough to pull the real device and swap in a BadUSB on the same port. Every other
+> port still prompts. It's a deliberate convenience/security trade-off.
 
 ```
 Insert USB → USBGuard blocks it
