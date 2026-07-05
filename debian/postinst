@@ -18,6 +18,39 @@ case "$1" in
     chown root:root /usr/local/lib/usb-auth-guard/helper
     chmod 755 /usr/local/lib/usb-auth-guard/helper
 
+    # helper-trusted is invoked via sudo NOPASSWD (trust-window fast path)
+    if [ -f /usr/local/lib/usb-auth-guard/helper-trusted ]; then
+        chown root:root /usr/local/lib/usb-auth-guard/helper-trusted
+        chmod 755 /usr/local/lib/usb-auth-guard/helper-trusted
+    fi
+
+    # The sudoers file ships as a template with a {{USER}} placeholder.
+    # Substitute the desktop user (first non-system account, uid >= 1000) and
+    # validate with visudo. A file left containing {{USER}} would break sudo
+    # entirely, so on any failure we remove it rather than ship a broken rule.
+    SUDOERS=/etc/sudoers.d/usb-auth-guard
+    if [ -f "$SUDOERS" ] && grep -q '{{USER}}' "$SUDOERS"; then
+        DESKTOP_USER="${SUDO_USER:-}"
+        if [ -z "$DESKTOP_USER" ] || [ "$DESKTOP_USER" = "root" ]; then
+            DESKTOP_USER=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')
+        fi
+        if [ -n "$DESKTOP_USER" ]; then
+            TMP=$(mktemp)
+            sed "s|{{USER}}|${DESKTOP_USER}|g" "$SUDOERS" > "$TMP"
+            if visudo -c -f "$TMP" >/dev/null 2>&1; then
+                install -Dm440 "$TMP" "$SUDOERS"
+                echo "Installed sudoers entry for $DESKTOP_USER (trust-window fast path)"
+            else
+                echo "sudoers validation failed - removing (trust-window fast path disabled)"
+                rm -f "$SUDOERS"
+            fi
+            rm -f "$TMP"
+        else
+            echo "Could not determine desktop user - removing sudoers template"
+            rm -f "$SUDOERS"
+        fi
+    fi
+
     # Backup existing configs
     if [ -f /etc/usbguard/usbguard-daemon.conf ]; then
         cp /etc/usbguard/usbguard-daemon.conf "$BACKUP_DIR/" 2>/dev/null || true
@@ -35,8 +68,17 @@ case "$1" in
     # Configure usbguard policy (AFTER rules are in place)
     CONF=/etc/usbguard/usbguard-daemon.conf
     if [ -f "$CONF" ]; then
-        sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=apply-policy/' "$CONF" || true
-        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=block/' "$CONF" || true
+        # Handle commented-out, existing, and missing keys.
+        if grep -qE "^#?PresentDevicePolicy=" "$CONF"; then
+            sed -i 's|^#\?PresentDevicePolicy=.*|PresentDevicePolicy=apply-policy|' "$CONF" || true
+        else
+            echo "PresentDevicePolicy=apply-policy" >> "$CONF"
+        fi
+        if grep -qE "^#?InsertedDevicePolicy=" "$CONF"; then
+            sed -i 's|^#\?InsertedDevicePolicy=.*|InsertedDevicePolicy=block|' "$CONF" || true
+        else
+            echo "InsertedDevicePolicy=block" >> "$CONF"
+        fi
     fi
 
     # Enable and start system services

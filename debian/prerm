@@ -6,8 +6,17 @@ case "$1" in
     # FIRST: Restore safe policies to prevent USB lockout
     CONF=/etc/usbguard/usbguard-daemon.conf
     if [ -f "$CONF" ]; then
-        sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' "$CONF" || true
-        sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' "$CONF" || true
+        # Handle commented-out, existing, and missing keys.
+        # InsertedDevicePolicy only supports: apply-policy | block | reject (not allow).
+        # Set ImplicitPolicyTarget=allow so unmatched devices are permitted,
+        # restoring pre-installation "allow everything" behaviour and avoiding lockout.
+        sed -i 's|^#\?PresentDevicePolicy=.*|PresentDevicePolicy=allow|' "$CONF" || true
+        sed -i 's|^#\?InsertedDevicePolicy=.*|InsertedDevicePolicy=apply-policy|' "$CONF" || true
+        if grep -qE "^#?ImplicitPolicyTarget=" "$CONF"; then
+            sed -i 's|^#\?ImplicitPolicyTarget=.*|ImplicitPolicyTarget=allow|' "$CONF" || true
+        else
+            echo "ImplicitPolicyTarget=allow" >> "$CONF"
+        fi
     fi
 
     # Reload usbguard with safe policy (don't stop it)
@@ -32,6 +41,9 @@ case "$1" in
         rm -f "$home_dir/.config/systemd/user/default.target.wants/usb-auth-guard.service" 2>/dev/null || true
     done
     rm -f /root/.config/systemd/user/default.target.wants/usb-auth-guard.service 2>/dev/null || true
+
+    # Remove sudoers entry (postinst may have rewritten it in place)
+    rm -f /etc/sudoers.d/usb-auth-guard 2>/dev/null || true
 
     # Remove installation marker
     rm -f /var/lib/usb-auth-guard/.installed 2>/dev/null || true

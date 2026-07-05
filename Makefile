@@ -77,8 +77,13 @@ install:
 
 	@# Configure usbguard (AFTER rules are generated)
 	@if [ -f /etc/usbguard/usbguard-daemon.conf ]; then \
-		sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=apply-policy/' /etc/usbguard/usbguard-daemon.conf; \
-		sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=block/' /etc/usbguard/usbguard-daemon.conf; \
+		conf=/etc/usbguard/usbguard-daemon.conf; \
+		if grep -qE '^#?PresentDevicePolicy=' $$conf; then \
+			sed -i 's|^#\?PresentDevicePolicy=.*|PresentDevicePolicy=apply-policy|' $$conf; \
+		else echo 'PresentDevicePolicy=apply-policy' >> $$conf; fi; \
+		if grep -qE '^#?InsertedDevicePolicy=' $$conf; then \
+			sed -i 's|^#\?InsertedDevicePolicy=.*|InsertedDevicePolicy=block|' $$conf; \
+		else echo 'InsertedDevicePolicy=block' >> $$conf; fi; \
 	fi
 
 	@# Enable services
@@ -98,8 +103,14 @@ uninstall:
 
 	@# FIRST: Restore safe policy
 	@if [ -f /etc/usbguard/usbguard-daemon.conf ]; then \
-		sed -i 's/^PresentDevicePolicy=.*/PresentDevicePolicy=allow/' /etc/usbguard/usbguard-daemon.conf; \
-		sed -i 's/^InsertedDevicePolicy=.*/InsertedDevicePolicy=apply-policy/' /etc/usbguard/usbguard-daemon.conf; \
+		conf=/etc/usbguard/usbguard-daemon.conf; \
+		sed -i 's|^#\?PresentDevicePolicy=.*|PresentDevicePolicy=allow|' $$conf; \
+		sed -i 's|^#\?InsertedDevicePolicy=.*|InsertedDevicePolicy=apply-policy|' $$conf; \
+		if grep -qE '^#?ImplicitPolicyTarget=' $$conf; then \
+			sed -i 's|^#\?ImplicitPolicyTarget=.*|ImplicitPolicyTarget=allow|' $$conf; \
+		else \
+			echo 'ImplicitPolicyTarget=allow' >> $$conf; \
+		fi; \
 	fi
 	systemctl reload usbguard 2>/dev/null || systemctl restart usbguard 2>/dev/null || true
 
@@ -130,6 +141,7 @@ deb:
 	mkdir -p $(PKGDIR)/usr/local/lib/usb-auth-guard
 	mkdir -p $(PKGDIR)/usr/share/polkit-1/actions
 	mkdir -p $(PKGDIR)/usr/lib/systemd/user
+	mkdir -p $(PKGDIR)/etc/sudoers.d
 
 	cp debian/control   $(PKGDIR)/DEBIAN/control
 	cp debian/postinst  $(PKGDIR)/DEBIAN/postinst
@@ -138,13 +150,18 @@ deb:
 
 	cp src/usb-auth-guard          $(PKGDIR)/usr/local/bin/usb-auth-guard
 	cp src/helper                  $(PKGDIR)/usr/local/lib/usb-auth-guard/helper
+	cp src/helper-trusted          $(PKGDIR)/usr/local/lib/usb-auth-guard/helper-trusted
 	cp src/org.usbauthguard.policy $(PKGDIR)/usr/share/polkit-1/actions/
 	cp src/usb-auth-guard.service  $(PKGDIR)/usr/lib/systemd/user/
+	@# sudoers is shipped as a template; postinst substitutes the desktop user
+	cp src/usb-auth-guard.sudoers  $(PKGDIR)/etc/sudoers.d/usb-auth-guard
 
 	chmod 755 $(PKGDIR)/usr/local/bin/usb-auth-guard
 	chmod 755 $(PKGDIR)/usr/local/lib/usb-auth-guard/helper
+	chmod 755 $(PKGDIR)/usr/local/lib/usb-auth-guard/helper-trusted
 	chmod 644 $(PKGDIR)/usr/share/polkit-1/actions/org.usbauthguard.policy
 	chmod 644 $(PKGDIR)/usr/lib/systemd/user/usb-auth-guard.service
+	chmod 440 $(PKGDIR)/etc/sudoers.d/usb-auth-guard
 
 	dpkg-deb --build --root-owner-group $(PKGDIR)
 	@echo "==> Built: $(PKGDIR).deb"
