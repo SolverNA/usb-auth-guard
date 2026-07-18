@@ -21,6 +21,15 @@ Protects against:
 > device and swap in a BadUSB on the same port. Only an *already-authorized*
 > device's removal arms a window, and every other port still prompts. It's a
 > deliberate convenience/security trade-off.
+>
+> **Denying a prompt revokes trust:** if you deny a device that was authorized
+> earlier in the session, its trust windows are disarmed — a replug prompts
+> again instead of being auto-allowed. After a denial the same device also
+> stays blocked without new dialogs for ~45s, so a rapidly re-enumerating
+> device can't spam password prompts (failed prompts count toward
+> `pam_faillock` and could otherwise lock your account). Prompts are shown one
+> at a time; extra re-enumerations of the same device while a dialog is open
+> are folded into it.
 
 ```
 Insert USB → USBGuard blocks it
@@ -31,6 +40,7 @@ Insert USB → USBGuard blocks it
                 ↓
   Correct password → device works
   Cancel / wrong   → device stays blocked
+                     (no re-prompt for ~45s; prior trust revoked)
 ```
 
 ## Supported distributions

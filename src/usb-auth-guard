@@ -13,6 +13,7 @@ from gi.repository import GLib
 import subprocess
 import os
 import sys
+import threading
 import time
 import logging
 import re
@@ -46,6 +47,14 @@ HELPER_TRUSTED = '/usr/local/lib/usb-auth-guard/helper-trusted'
 TRUST_WINDOW_SECONDS      = 60
 PORT_TRUST_WINDOW_SECONDS = 5
 
+# After the user denies/cancels a prompt for a device identity, further inserts
+# of that identity stay blocked without a new dialog for this long. Devices that
+# re-enumerate rapidly (an iPhone switching modes, a board being flashed) would
+# otherwise fire one pkexec per new device id; overlapping dialogs auto-fail
+# their PAM conversation, and every such failure counts toward pam_faillock —
+# three of them lock the user's account for sudo and console login too.
+DENIAL_COOLDOWN_SECONDS = 45
+
 # Identities authorized this session. A window is armed only when an *authorized*
 # device is removed — so unplugging a still-blocked device can't arm a window and
 # get its replacement auto-allowed without a password.
@@ -55,6 +64,21 @@ _authorized_port: set[str] = set()
 # Armed on REMOVAL of an authorized device; value is the removal timestamp.
 _trust_window: dict[str, float] = {}       # vid_pid  -> removed_at
 _port_trust_window: dict[str, float] = {}  # via_port -> removed_at
+
+# Guards all of the state above plus _pending/_denied_until: it is shared
+# between the GLib main loop (D-Bus callbacks) and authorization workers.
+_state_lock = threading.Lock()
+
+# At most one polkit dialog at a time. The agent can only service one
+# conversation; concurrent pkexec calls fail instantly and feed pam_faillock.
+_prompt_lock = threading.Lock()
+
+# identity key -> newest blocked device id. Present while an authorization
+# worker is running for that identity; re-inserts meanwhile just update the id.
+_pending: dict[str, int] = {}
+
+# identity key -> monotonic deadline until which prompts are suppressed.
+_denied_until: dict[str, float] = {}
 
 
 def get_env():
@@ -67,7 +91,12 @@ def get_env():
     return env
 
 
-def allow_device_via_polkit(device_id: int, device_name: str) -> bool:
+def run_polkit_helper(device_id: int, device_name: str) -> int | None:
+    """Show the polkit dialog and run the helper. Returns the pkexec exit code,
+    or None on timeout/error. 0 = authorized and allowed; 126/127 = the user
+    dismissed the dialog or authentication was denied; any other code = the
+    dialog succeeded but the helper itself failed (e.g. the device re-enumerated
+    during the prompt and the id is stale)."""
     try:
         result = subprocess.run(
             [
@@ -83,17 +112,19 @@ def allow_device_via_polkit(device_id: int, device_name: str) -> bool:
         )
         if result.returncode == 0:
             log.info('Device %d "%s" allowed via polkit', device_id, device_name)
-            return True
-        else:
+        elif result.returncode in (126, 127):
             log.info('Device %d denied or cancelled (pkexec exit=%d)',
                      device_id, result.returncode)
-            return False
+        else:
+            log.warning('Helper failed for device %d (pkexec exit=%d): %s',
+                        device_id, result.returncode, result.stderr.strip())
+        return result.returncode
     except subprocess.TimeoutExpired:
         log.warning('Polkit dialog timed out for device %d', device_id)
-        return False
+        return None
     except Exception as e:
         log.error('pkexec error: %s', e)
-        return False
+        return None
 
 
 def allow_device_via_sudo(device_id: int, device_name: str) -> bool:
@@ -161,13 +192,94 @@ def mark_trusted(store: dict[str, float], key: str | None) -> None:
 def mark_authorized(vid_pid: str | None, via_port: str | None) -> None:
     """Device is authorized and currently present: remember its identity and
     cancel any running remove-countdown (the grace clock only matters once the
-    device is unplugged again)."""
+    device is unplugged again). Caller must hold _state_lock."""
     if vid_pid is not None:
         _authorized_vidpid.add(vid_pid)
         _trust_window.pop(vid_pid, None)
     if via_port is not None:
         _authorized_port.add(via_port)
         _port_trust_window.pop(via_port, None)
+
+
+def revoke_authorization(vid_pid: str | None, via_port: str | None) -> None:
+    """The user explicitly denied this identity: forget any past authorization
+    and disarm its windows. Without this, a device authorized earlier in the
+    session but denied on re-insert would still arm a trust window on unplug —
+    and the next replug would be auto-allowed, bypassing the explicit denial.
+    Caller must hold _state_lock."""
+    if vid_pid is not None:
+        _authorized_vidpid.discard(vid_pid)
+        _trust_window.pop(vid_pid, None)
+    if via_port is not None:
+        _authorized_port.discard(via_port)
+        _port_trust_window.pop(via_port, None)
+
+
+def identity_key(vid_pid: str | None, via_port: str | None, dev_id: int) -> str:
+    """Stable identity for collapsing re-enumerations: VID:PID when known,
+    otherwise the physical port, otherwise the (unique) device id."""
+    if vid_pid is not None:
+        return vid_pid
+    if via_port is not None:
+        return f'port:{via_port}'
+    return f'dev:{dev_id}'
+
+
+def authorize_worker(key: str, dev_id: int, device_name: str,
+                     vid_pid: str | None, via_port: str | None,
+                     trusted: bool, trust_reason: str) -> None:
+    """Runs the (slow, possibly interactive) authorization outside the GLib
+    main loop so USB events keep flowing while a dialog is open. Exactly one
+    worker exists per identity key; re-inserts meanwhile only bump _pending."""
+    try:
+        if trusted:
+            log.info('Blocked device id=%d name="%s" vid:pid=%s port=%s — within %s grace window',
+                     dev_id, device_name, vid_pid, via_port, trust_reason)
+            if allow_device_via_sudo(dev_id, device_name):
+                with _state_lock:
+                    mark_authorized(vid_pid, via_port)
+                return
+            log.info('Falling back to polkit prompt for device %d', dev_id)
+
+        with _prompt_lock:
+            # The device may have re-enumerated while we waited for the lock.
+            with _state_lock:
+                dev_id = _pending.get(key, dev_id)
+            log.info('New blocked device: id=%d name="%s"', dev_id, device_name)
+            rc = run_polkit_helper(dev_id, device_name)
+
+        if rc == 0:
+            with _state_lock:
+                mark_authorized(vid_pid, via_port)
+                latest = _pending.get(key, dev_id)
+            if latest != dev_id:
+                # Re-enumerated while the user was typing: the id we allowed is
+                # stale. Auth already succeeded, so fix up the current
+                # incarnation via the fast path.
+                allow_device_via_sudo(latest, device_name)
+        elif rc is None or rc in (126, 127):
+            # Denied, cancelled or timed out: cool down this identity so a
+            # re-enumerating device can't spam dialogs into a faillock lockout,
+            # and revoke any trust it earned earlier in the session.
+            with _state_lock:
+                _denied_until[key] = time.monotonic() + DENIAL_COOLDOWN_SECONDS
+                revoke_authorization(vid_pid, via_port)
+            log.info('Device "%s" denied — suppressing prompts for %ds, trust revoked',
+                     device_name, DENIAL_COOLDOWN_SECONDS)
+        else:
+            # Dialog completed but the helper failed — usually the id went
+            # stale mid-prompt. If a newer incarnation exists, allow it.
+            with _state_lock:
+                latest = _pending.get(key, dev_id)
+            if latest != dev_id and allow_device_via_sudo(latest, device_name):
+                with _state_lock:
+                    mark_authorized(vid_pid, via_port)
+            else:
+                log.warning('Device %d "%s" not allowed (helper failure)',
+                            dev_id, device_name)
+    finally:
+        with _state_lock:
+            _pending.pop(key, None)
 
 
 def on_device_presence_changed(device_id, event_type, target, device_rule, *args):
@@ -183,10 +295,11 @@ def on_device_presence_changed(device_id, event_type, target, device_rule, *args
     # until it re-appears (re-enumeration during flashing, or a deliberate
     # replug) is what we auto-allow. Only authorized devices arm a window.
     if ev == REMOVE:
-        if vid_pid in _authorized_vidpid:
-            mark_trusted(_trust_window, vid_pid)
-        if via_port in _authorized_port:
-            mark_trusted(_port_trust_window, via_port)
+        with _state_lock:
+            if vid_pid in _authorized_vidpid:
+                mark_trusted(_trust_window, vid_pid)
+            if via_port in _authorized_port:
+                mark_trusted(_port_trust_window, via_port)
         return
 
     if ev != INSERT:
@@ -196,22 +309,36 @@ def on_device_presence_changed(device_id, event_type, target, device_rule, *args
 
     dev_id = int(device_id)
     device_name = parse_device_name(device_rule)
+    key = identity_key(vid_pid, via_port, dev_id)
 
-    trusted_vid  = is_recently_trusted(_trust_window, vid_pid, TRUST_WINDOW_SECONDS)
-    trusted_port = is_recently_trusted(_port_trust_window, via_port, PORT_TRUST_WINDOW_SECONDS)
-
-    if trusted_vid or trusted_port:
-        reason = 'vid:pid' if trusted_vid else 'port'
-        log.info('Blocked device id=%d name="%s" vid:pid=%s port=%s — within %s grace window',
-                 dev_id, device_name, vid_pid, via_port, reason)
-        if allow_device_via_sudo(dev_id, device_name):
-            mark_authorized(vid_pid, via_port)
+    with _state_lock:
+        if key in _pending:
+            # Same identity re-enumerated while its worker is still running:
+            # remember the newest id, don't open another dialog.
+            _pending[key] = dev_id
+            log.info('Device id=%d "%s" re-enumerated during pending prompt — collapsed',
+                     dev_id, device_name)
             return
-        log.info('Falling back to polkit prompt for device %d', dev_id)
 
-    log.info('New blocked device: id=%d name="%s"', dev_id, device_name)
-    if allow_device_via_polkit(dev_id, device_name):
-        mark_authorized(vid_pid, via_port)
+        now = time.monotonic()
+        deadline = _denied_until.get(key)
+        if deadline is not None and now < deadline:
+            log.info('Device id=%d "%s" was recently denied — staying blocked (%.0fs cooldown left)',
+                     dev_id, device_name, deadline - now)
+            return
+        _denied_until.pop(key, None)
+
+        trusted_vid  = is_recently_trusted(_trust_window, vid_pid, TRUST_WINDOW_SECONDS)
+        trusted_port = is_recently_trusted(_port_trust_window, via_port, PORT_TRUST_WINDOW_SECONDS)
+        _pending[key] = dev_id
+
+    threading.Thread(
+        target=authorize_worker,
+        args=(key, dev_id, device_name, vid_pid, via_port,
+              trusted_vid or trusted_port,
+              'vid:pid' if trusted_vid else 'port'),
+        daemon=True,
+    ).start()
 
 
 def main():
